@@ -3,22 +3,22 @@ pragma solidity ^0.8.20;
 
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 
-error Hackathon__InvalidParams();
-error Hackathon__NotJudge();
-error Hackathon__SubmissionClosed();
-error Hackathon__AlreadyDistributed();
-error Hackathon__NoVotesCast();
-error Hackathon__NotAfterEndTime();
-error Hackathon__AlreadyClaimed();
-error Hackathon__NoTokensToVote();
-error Hackathon__InsufficientTokens();
-error Hackathon__AlreadyConcluded();
+error HackHub__InvalidParams();
+error HackHub__NotJudge();
+error HackHub__SubmissionClosed();
+error HackHub__AlreadyDistributed();
+error HackHub__NoVotesCast();
+error HackHub__NotAfterEndTime();
+error HackHub__AlreadyClaimed();
+error HackHub__NoTokensToVote();
+error HackHub__InsufficientTokens();
+error HackHub__AlreadyConcluded();
 
-interface IHackathonFactory {
+interface IHackHubFactory {
     function hackathonConcluded(address hackathon) external;
 }
 
-contract Hackathon is Ownable {
+contract HackHub is Ownable {
     struct Judge {
         address addr;
         string  name;
@@ -50,18 +50,18 @@ contract Hackathon is Ownable {
     event Voted(address indexed judge, uint256 indexed projectId, uint256 amount);
     event PrizeIncreased(uint256 newPrizePool, uint256 addedAmount);
     event TokensAdjusted(address indexed judge, uint256 newTokenAmount);
-    event prizeClaimed(uint256 indexed projectId, address indexed submitter, uint256 amount);
+    event prizeShareClaimed(uint256 indexed projectId, address indexed submitter, uint256 amount);
     event HackathonConcluded();
 
     modifier duringSubmission() {
         if (block.timestamp < startTime || block.timestamp > endTime) {
-            revert Hackathon__SubmissionClosed();
+            revert HackHub__SubmissionClosed();
         }
         _;
     }
     modifier afterEnd() {
         if (block.timestamp <= endTime) {
-            revert Hackathon__NotAfterEndTime();
+            revert HackHub__NotAfterEndTime();
         }
         _;
     }
@@ -73,16 +73,15 @@ contract Hackathon is Ownable {
         address[]memory _judgeAddrs,
         string[] memory _judgeNames,
         uint256[]memory _tokenPerJudge
-    ) payable {
+    ) payable Ownable(tx.origin) {
         if ( _startTime >= _endTime || msg.value == 0 || _judgeAddrs.length != _judgeNames.length || _judgeAddrs.length != _tokenPerJudge.length) 
-            revert Hackathon__InvalidParams();
+            revert HackHub__InvalidParams();
 
         hackathonName = _name;
         startTime     = _startTime;
         endTime       = _endTime;
         prizePool     = msg.value;
         factory       = msg.sender;  // factory is the one creating this contract
-        _transferOwnership(tx.origin); // actual owner is the one who called factory
 
         for (uint i; i < _judgeAddrs.length; i++) {
             address j = _judgeAddrs[i];
@@ -103,10 +102,10 @@ contract Hackathon is Ownable {
     }
 
     function vote(uint256 projectId, uint256 amount) external duringSubmission {
-        if (!isJudge[msg.sender]) revert Hackathon__NotJudge();
-        if (judgeTokens[msg.sender] == 0) revert Hackathon__NoTokensToVote();
-        if (judgeTokens[msg.sender] < amount) revert Hackathon__InsufficientTokens();
-        if (projectId >= projects.length) revert Hackathon__InvalidParams();
+        if (!isJudge[msg.sender]) revert HackHub__NotJudge();
+        if (judgeTokens[msg.sender] == 0) revert HackHub__NoTokensToVote();
+        if (judgeTokens[msg.sender] < amount) revert HackHub__InsufficientTokens();
+        if (projectId >= projects.length) revert HackHub__InvalidParams();
 
         judgeTokens[msg.sender] -= amount;
         projectTokens[projectId] += amount;
@@ -114,14 +113,14 @@ contract Hackathon is Ownable {
     }
 
     function increasePrizePool() external payable onlyOwner {
-        if (msg.value == 0) revert Hackathon__InvalidParams();
+        if (msg.value == 0) revert HackHub__InvalidParams();
         prizePool += msg.value;
         emit PrizeIncreased(prizePool, msg.value);
     }
 
     /// @notice Project owner can change token allocation for judges (only before submission deadline)
     function adjustJudgeTokens(address judge, uint256 newTokenAmount) external onlyOwner duringSubmission {
-        if (!isJudge[judge]) revert Hackathon__NotJudge();
+        if (!isJudge[judge]) revert HackHub__NotJudge();
         
         uint256 oldTokens = judgeTokens[judge];
         totalTokens = totalTokens - oldTokens + newTokenAmount;
@@ -130,22 +129,22 @@ contract Hackathon is Ownable {
     }
 
     function concludeHackathon() external onlyOwner afterEnd {
-        if (concluded) revert Hackathon__AlreadyConcluded();
+        if (concluded) revert HackHub__AlreadyConcluded();
         concluded = true;        
-        IHackathonFactory(factory).hackathonConcluded(address(this));
+        IHackHubFactory(factory).hackathonConcluded(address(this));
         emit HackathonConcluded();
     }
 
     function claimPrize(uint256 projectId) external afterEnd {
-        if (projectId >= projects.length) revert Hackathon__InvalidParams();
-        if (projects[projectId].submitter != msg.sender) revert Hackathon__InvalidParams();
-        if (prizeClaimed[projectId]) revert Hackathon__AlreadyClaimed();
-        if (totalTokens == 0) revert Hackathon__NoVotesCast();
+        if (projectId >= projects.length) revert HackHub__InvalidParams();
+        if (projects[projectId].submitter != msg.sender) revert HackHub__InvalidParams();
+        if (prizeClaimed[projectId]) revert HackHub__AlreadyClaimed();
+        if (totalTokens == 0) revert HackHub__NoVotesCast();
 
         prizeClaimed[projectId] = true;
         uint256 projectShare = (prizePool * projectTokens[projectId]) / totalTokens;
         payable(msg.sender).transfer(projectShare);
-        emit prizeClaimed(projectId, msg.sender, projectShare);
+        emit prizeShareClaimed(projectId, msg.sender, projectShare);
     }
 
     function getProjectPrize(uint256 projectId) external view returns (uint256) {

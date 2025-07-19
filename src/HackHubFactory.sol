@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-import {Hackathon} from "./Hackathon.sol";
+import {HackHub} from "./HackHub.sol";
 
-contract HackathonFactory {
+contract HackHubFactory {
     address[] public ongoingHackathons;
     address[] public pastHackathons;
     

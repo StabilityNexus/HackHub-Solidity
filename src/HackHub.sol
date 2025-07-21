@@ -11,6 +11,7 @@ error NotAfterEndTime();
 error AlreadyClaimed();
 error InsufficientTokens();
 error AlreadyConcluded();
+error AlreadySubmitted();
 
 interface IHackHubFactory {
     function hackathonConcluded(address hackathon) external;
@@ -39,7 +40,6 @@ contract Hackathon is Ownable {
     bool    public concluded;             // whether hackathon has been concluded
     address public factory;               // factory contract address
 
-    // Arrays to track judges, projects, and participants
     Judge[] public judges;
     Project[] public projects;
     address[] public participants;
@@ -52,10 +52,10 @@ contract Hackathon is Ownable {
     mapping(address => mapping(uint256 => uint256)) public judgeVotes; // judge => projectId => amount voted
 
     mapping(address => uint256) public participantProjectId;
-    mapping(address => Project) public participantProject; // participant address → project
-    mapping(address => bool) public isParticipant; // track if address is already a participant
+    mapping(address => bool) public hasSubmitted; // track if address is already a participant
 
     event ProjectSubmitted(uint256 indexed projectId, address indexed submitter);
+    event ProjectEdited(uint256 indexed projectId, address indexed submitter);
     event Voted(address indexed judge, uint256 indexed projectId, uint256 amount);
     event PrizeIncreased(uint256 newPrizePool, uint256 addedAmount);
     event TokensAdjusted(address indexed judge, uint256 newTokenAmount);
@@ -109,7 +109,6 @@ contract Hackathon is Ownable {
             judgeTokens[j] = _tokenPerJudge[i];
             totalTokens += _tokenPerJudge[i];
             
-            // Add judge to judges array
             judges.push(Judge({
                 addr: j,
                 name: _judgeNames[i]
@@ -118,6 +117,7 @@ contract Hackathon is Ownable {
     }
 
     function submitProject(string memory _sourceCode, string memory _documentation, address _prizeRecipient) external duringSubmission {
+        if (hasSubmitted[msg.sender]) revert AlreadySubmitted();
         uint256 projectId = projects.length;
         address recipient = _prizeRecipient == address(0) ? msg.sender : _prizeRecipient;
         
@@ -129,16 +129,23 @@ contract Hackathon is Ownable {
         });
         participantProjectId[msg.sender] = projectId;
         projects.push(newProject);
-        participantProject[msg.sender] = newProject;
         
-        if (!isParticipant[msg.sender]) {
-            participants.push(msg.sender);
-            isParticipant[msg.sender] = true;
-            IHackHubFactory(factory).registerParticipant(msg.sender);          // Register participant in factory
-            emit ParticipantRegistered(msg.sender);
-        }
-        
+        participants.push(msg.sender);
+        hasSubmitted[msg.sender] = true;
+        IHackHubFactory(factory).registerParticipant(msg.sender);          // Register participant in factory
+        emit ParticipantRegistered(msg.sender);
         emit ProjectSubmitted(projectId, msg.sender);
+    }
+
+    function editProject(string memory _sourceCode, string memory _documentation, address _prizeRecipient) external duringSubmission {
+        if (!hasSubmitted[msg.sender]) revert InvalidParams();
+        uint256 projectId = participantProjectId[msg.sender];
+        address recipient = _prizeRecipient == address(0) ? msg.sender : _prizeRecipient;
+        
+        projects[projectId].sourceCode = _sourceCode;
+        projects[projectId].documentation = _documentation;
+        projects[projectId].prizeRecipient = recipient;
+        emit ProjectEdited(projectId, msg.sender);
     }
 
     function vote(uint256 projectId, uint256 amount) external duringEvaluation {
@@ -167,7 +174,7 @@ contract Hackathon is Ownable {
         if (concluded) revert AlreadyConcluded();
         
         uint256 oldTokens = judgeTokens[judge];
-        totalTokens = totalTokens - oldTokens + newTokenAmount;
+        totalTokens = totalTokens + newTokenAmount - oldTokens;
         judgeTokens[judge] = newTokenAmount;        
         emit TokensAdjusted(judge, newTokenAmount);
     }

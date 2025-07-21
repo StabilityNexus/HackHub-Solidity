@@ -3,37 +3,37 @@ pragma solidity ^0.8.20;
 
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 
-error HackHub__InvalidParams();
-error HackHub__NotJudge();
-error HackHub__SubmissionClosed();
-error HackHub__NoVotesCast();
-error HackHub__NotAfterEndTime();
-error HackHub__AlreadyClaimed();
-error HackHub__NoTokensToVote();
-error HackHub__InsufficientTokens();
-error HackHub__AlreadyConcluded();
+error InvalidParams();
+error NotJudge();
+error SubmissionClosed();
+error NoVotesCast();
+error NotAfterEndTime();
+error AlreadyClaimed();
+error InsufficientTokens();
+error AlreadyConcluded();
 
 interface IHackHubFactory {
     function hackathonConcluded(address hackathon) external;
     function registerParticipant(address participant) external;
 }
 
-contract HackHub is Ownable {
+contract Hackathon is Ownable {
     struct Judge {
         address addr;
         string  name;
     }
     struct Project {
         address submitter;
+        address prizeRecipient;   // address to receive prize (can be different from submitter)
         string  sourceCode;
         string  documentation;
     }
 
     string  public hackathonName;
-    uint256 public startTime;             // Unix timestamp for start
-    uint256 public endTime;               // Unix timestamp for end
+    uint256 public startTime;             // Unix timestamp for submission start
+    uint256 public submissionEndTime;     // Unix timestamp for submission end (evaluation starts after this)
     uint256 public startDate;             // Start date (YYYYMMDD format)
-    uint256 public endDate;               // End date (YYYYMMDD format)
+    uint256 public submissionEndDate;     // Submission end date (YYYYMMDD format)
     uint256 public prizePool;             // in wei
     uint256 public totalTokens;           // total tokens assigned to all judges
     bool    public concluded;             // whether hackathon has been concluded
@@ -49,6 +49,7 @@ contract HackHub is Ownable {
     
     mapping(uint256 => uint256) public projectTokens; // projectId → tokens received
     mapping(uint256 => bool) public prizeClaimed;   // projectId → has claimed prize
+    mapping(address => mapping(uint256 => uint256)) public judgeVotes; // judge => projectId => amount voted
 
     mapping(address => uint256) public participantProjectId;
     mapping(address => Project) public participantProject; // participant address → project
@@ -63,14 +64,20 @@ contract HackHub is Ownable {
     event ParticipantRegistered(address indexed participant);
 
     modifier duringSubmission() {
-        if (block.timestamp < startTime || block.timestamp > endTime) {
-            revert HackHub__SubmissionClosed();
+        if (block.timestamp < startTime || block.timestamp > submissionEndTime) {
+            revert SubmissionClosed();
         }
         _;
     }
-    modifier afterEnd() {
-        if (block.timestamp <= endTime) {
-            revert HackHub__NotAfterEndTime();
+    modifier duringEvaluation() {
+        if (block.timestamp <= submissionEndTime || concluded) {
+            revert SubmissionClosed();
+        }
+        _;
+    }
+    modifier afterConcluded() {
+        if (!concluded) {
+            revert NotAfterEndTime();
         }
         _;
     }
@@ -79,20 +86,20 @@ contract HackHub is Ownable {
         string   memory _name,
         uint256         _startDate,
         uint256         _startTime,
-        uint256         _endDate,
-        uint256         _endTime,
+        uint256         _submissionEndDate,
+        uint256         _submissionEndTime,
         address[]memory _judgeAddrs,
         string[] memory _judgeNames,
         uint256[]memory _tokenPerJudge
     ) payable Ownable(tx.origin) {
-        if ( _startTime >= _endTime || msg.value == 0 || _judgeAddrs.length != _judgeNames.length || _judgeAddrs.length != _tokenPerJudge.length) 
-            revert HackHub__InvalidParams();
+        if ( _startTime >= _submissionEndTime || msg.value == 0 || _judgeAddrs.length != _judgeNames.length || _judgeAddrs.length != _tokenPerJudge.length) 
+            revert InvalidParams();
 
         hackathonName = _name;
         startDate     = _startDate;
         startTime     = _startTime;
-        endDate       = _endDate;
-        endTime       = _endTime;
+        submissionEndDate = _submissionEndDate;
+        submissionEndTime = _submissionEndTime;
         prizePool     = msg.value;
         factory       = msg.sender;  // factory is the one creating this contract
 
@@ -110,11 +117,13 @@ contract HackHub is Ownable {
         }
     }
 
-    function submitProject(string memory _sourceCode, string memory _documentation) external duringSubmission {
+    function submitProject(string memory _sourceCode, string memory _documentation, address _prizeRecipient) external duringSubmission {
         uint256 projectId = projects.length;
+        address recipient = _prizeRecipient == address(0) ? msg.sender : _prizeRecipient;
         
         Project memory newProject = Project({
             submitter: msg.sender,
+            prizeRecipient: recipient,
             sourceCode: _sourceCode,
             documentation: _documentation
         });
@@ -122,38 +131,40 @@ contract HackHub is Ownable {
         projects.push(newProject);
         participantProject[msg.sender] = newProject;
         
-        // Add participant to participants array if not already added
         if (!isParticipant[msg.sender]) {
             participants.push(msg.sender);
             isParticipant[msg.sender] = true;
-            // Register participant in factory
-            IHackHubFactory(factory).registerParticipant(msg.sender);
+            IHackHubFactory(factory).registerParticipant(msg.sender);          // Register participant in factory
             emit ParticipantRegistered(msg.sender);
         }
         
         emit ProjectSubmitted(projectId, msg.sender);
     }
 
-    function vote(uint256 projectId, uint256 amount) external duringSubmission {
-        if (!isJudge[msg.sender]) revert HackHub__NotJudge();
-        if (judgeTokens[msg.sender] == 0) revert HackHub__NoTokensToVote();
-        if (judgeTokens[msg.sender] < amount) revert HackHub__InsufficientTokens();
-        if (projectId >= projects.length) revert HackHub__InvalidParams();
-
-        judgeTokens[msg.sender] -= amount;
-        projectTokens[projectId] += amount;
+    function vote(uint256 projectId, uint256 amount) external duringEvaluation {
+        if (!isJudge[msg.sender]) revert NotJudge();
+        if (projectId >= projects.length) revert InvalidParams();
+        
+        uint256 currentVote = judgeVotes[msg.sender][projectId];
+        uint256 availableTokens = judgeTokens[msg.sender] + currentVote;
+        if (availableTokens < amount) revert InsufficientTokens();
+        
+        judgeTokens[msg.sender] = availableTokens - amount;
+        projectTokens[projectId] = projectTokens[projectId] - currentVote + amount;
+        judgeVotes[msg.sender][projectId] = amount;
         emit Voted(msg.sender, projectId, amount);
     }
 
     function increasePrizePool() external payable onlyOwner {
-        if (msg.value == 0) revert HackHub__InvalidParams();
+        if (msg.value == 0) revert InvalidParams();
         prizePool += msg.value;
         emit PrizeIncreased(prizePool, msg.value);
     }
 
-    /// @notice Project owner can change token allocation for judges (only before submission deadline)
-    function adjustJudgeTokens(address judge, uint256 newTokenAmount) external onlyOwner duringSubmission {
-        if (!isJudge[judge]) revert HackHub__NotJudge();
+    /// @notice Project owner can change token allocation for judges (before hackathon is concluded)
+    function adjustJudgeTokens(address judge, uint256 newTokenAmount) external duringSubmission onlyOwner {
+        if (!isJudge[judge]) revert NotJudge();
+        if (concluded) revert AlreadyConcluded();
         
         uint256 oldTokens = judgeTokens[judge];
         totalTokens = totalTokens - oldTokens + newTokenAmount;
@@ -161,23 +172,25 @@ contract HackHub is Ownable {
         emit TokensAdjusted(judge, newTokenAmount);
     }
 
-    function concludeHackathon() external onlyOwner afterEnd {
-        if (concluded) revert HackHub__AlreadyConcluded();
+    function concludeHackathon() external duringEvaluation onlyOwner {
+        if (concluded) revert AlreadyConcluded();
         concluded = true;        
         IHackHubFactory(factory).hackathonConcluded(address(this));
         emit HackathonConcluded();
     }
 
-    function claimPrize(uint256 projectId) external afterEnd {
-        if (projectId >= projects.length) revert HackHub__InvalidParams();
-        if (projects[projectId].submitter != msg.sender) revert HackHub__InvalidParams();
-        if (prizeClaimed[projectId]) revert HackHub__AlreadyClaimed();
-        if (totalTokens == 0) revert HackHub__NoVotesCast();
+    function claimPrize(uint256 projectId) external afterConcluded {
+        if (projectId >= projects.length) revert InvalidParams();
+        if (projects[projectId].submitter != msg.sender) revert InvalidParams();
+        if (prizeClaimed[projectId]) revert AlreadyClaimed();
+        if (totalTokens == 0) revert NoVotesCast();
 
         prizeClaimed[projectId] = true;
         uint256 projectShare = (prizePool * projectTokens[projectId]) / totalTokens;
-        payable(msg.sender).transfer(projectShare);
-        emit prizeShareClaimed(projectId, msg.sender, projectShare);
+        address recipient = projects[projectId].prizeRecipient;
+        (bool success, ) = payable(recipient).call{value: projectShare}("");
+        require(success, "Transfer failed");
+        emit prizeShareClaimed(projectId, recipient, projectShare);
     }
 
     function getProjectPrize(uint256 projectId) external view returns (uint256) {
@@ -191,8 +204,7 @@ contract HackHub is Ownable {
         if (projectId >= projects.length) return 0;
         return projectTokens[projectId];
     }
-
-    function getJudgeRemainingTokens(address judge) external view returns (uint256) { return judgeTokens[judge]; }
+    
     function projectCount() external view returns (uint) { return projects.length; }
     function judgeCount() external view returns (uint) { return judges.length; }
     function participantCount() external view returns (uint) { return participants.length; }

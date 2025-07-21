@@ -1,7 +1,13 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-import {HackHub} from "./HackHub.sol";
+import {Hackathon} from "./HackHub.sol";
+
+error OnlyOngoingHackathons();
+error OnlyHackathonContract();
+error HackathonNotOngoing();
+error InvalidIndexRange();
+error EndIndexOutOfBounds();
 
 contract HackHubFactory {
     address[] public ongoingHackathons;
@@ -24,18 +30,18 @@ contract HackHubFactory {
         string   memory name,
         uint256         startDate,              // Start date (YYYYMMDD format)
         uint256         startTime,              // Unix timestamp for start
-        uint256         endDate,                // End date (YYYYMMDD format)
-        uint256         endTime,                // Unix timestamp for end (submission deadline)
+        uint256         submissionEndDate,      // Submission end date (YYYYMMDD format)
+        uint256         submissionEndTime,      // Unix timestamp for submission deadline
         address[]memory judges,
         string[] memory judgeNames,
         uint256[]memory tokenPerJudge
     ) external payable {
-        HackHub h = (new HackHub){value: msg.value}(
+        Hackathon h = (new Hackathon){value: msg.value}(
             name,
             startDate,
             startTime,
-            endDate,
-            endTime,
+            submissionEndDate,
+            submissionEndTime,
             judges,
             judgeNames,
             tokenPerJudge
@@ -54,15 +60,15 @@ contract HackHubFactory {
 
     /// @notice Register a participant for a hackathon (called when they submit a project)
     function registerParticipant(address participant) external {
-        require(isOngoing[msg.sender], "Only ongoing hackathons can register participants");
+        if (!isOngoing[msg.sender]) revert OnlyOngoingHackathons();
         participantOngoingHackathons[participant].push(msg.sender);
         emit ParticipantRegistered(msg.sender, participant);
     }
 
     /// @notice Called by Hackathon contract when it's concluded
     function hackathonConcluded(address hackathon) external {
-        require(msg.sender == hackathon, "Only hackathon can call this");
-        require(isOngoing[hackathon], "Hackathon not in ongoing list");
+        if (msg.sender != hackathon) revert OnlyHackathonContract();
+        if (!isOngoing[hackathon]) revert HackathonNotOngoing();
         
         // Remove from ongoing hackathons
         for (uint i = 0; i < ongoingHackathons.length; i++) {
@@ -75,7 +81,7 @@ contract HackHubFactory {
         pastHackathons.push(hackathon);
         isOngoing[hackathon] = false;
 
-        HackHub hackHubContract = HackHub(hackathon);
+        Hackathon hackHubContract = Hackathon(hackathon);
         uint256 judgeCount = hackHubContract.judgeCount();
         
         for (uint256 i = 0; i < judgeCount; i++) {
@@ -117,8 +123,8 @@ contract HackHubFactory {
     function getJudgePastCount(address judge) external view returns (uint256) { return judgePastHackathons[judge].length; }
 
     function _getSlice(address[] storage source, uint256 startIndex, uint256 endIndex) internal view returns (address[] memory) {
-        require(startIndex <= endIndex, "Invalid index range");
-        require(endIndex < source.length, "End index out of bounds");
+        if (startIndex > endIndex) revert InvalidIndexRange();
+        if (endIndex >= source.length) revert EndIndexOutOfBounds();
         uint256 length = endIndex - startIndex + 1;
         address[] memory result = new address[](length);
         for (uint256 i = 0; i < length; i++) {

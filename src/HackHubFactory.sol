@@ -2,12 +2,14 @@
 pragma solidity ^0.8.20;
 
 import {Hackathon} from "./HackHub.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 error OnlyOngoingHackathons();
 error OnlyHackathonContract();
 error HackathonNotOngoing();
 error InvalidIndexRange();
 error EndIndexOutOfBounds();
+error TokenTransferFailed();
 
 contract HackHubFactory {
     address[] public ongoingHackathons;
@@ -28,12 +30,11 @@ contract HackHubFactory {
 
     function createHackathon(
         string   memory name,
-        uint256         startDate,              // Start date (YYYYMMDD format)
-        uint256         startTime,              // Unix timestamp for start
-        uint256         submissionEndDate,      // Submission end date (YYYYMMDD format)
-        uint256         submissionEndTime,      // Unix timestamp for submission deadline
+        uint256         startDate,
+        uint256         startTime, 
+        uint256         submissionEndDate,
+        uint256         submissionEndTime,
         address[]memory judges,
-        string[] memory judgeNames,
         uint256[]memory tokenPerJudge
     ) external payable {
         Hackathon h = (new Hackathon){value: msg.value}(
@@ -43,8 +44,9 @@ contract HackHubFactory {
             submissionEndDate,
             submissionEndTime,
             judges,
-            judgeNames,
-            tokenPerJudge
+            tokenPerJudge,
+            prizeToken,
+            prizeAmount
         );
         isOngoing[address(h)] = true;
         ongoingHackathons.push(address(h));
@@ -58,19 +60,15 @@ contract HackHubFactory {
         emit HackathonCreated(address(h), msg.sender);
     }
 
-    /// @notice Register a participant for a hackathon (called when they submit a project)
     function registerParticipant(address participant) external {
         if (!isOngoing[msg.sender]) revert OnlyOngoingHackathons();
         participantOngoingHackathons[participant].push(msg.sender);
         emit ParticipantRegistered(msg.sender, participant);
     }
 
-    /// @notice Called by Hackathon contract when it's concluded
     function hackathonConcluded(address hackathon) external {
         if (msg.sender != hackathon) revert OnlyHackathonContract();
         if (!isOngoing[hackathon]) revert HackathonNotOngoing();
-        
-        // Remove from ongoing hackathons
         for (uint i = 0; i < ongoingHackathons.length; i++) {
             if (ongoingHackathons[i] == hackathon) {
                 ongoingHackathons[i] = ongoingHackathons[ongoingHackathons.length - 1];
@@ -80,7 +78,6 @@ contract HackHubFactory {
         }
         pastHackathons.push(hackathon);
         isOngoing[hackathon] = false;
-
         Hackathon hackHubContract = Hackathon(hackathon);
         uint256 judgeCount = hackHubContract.judgeCount();
         

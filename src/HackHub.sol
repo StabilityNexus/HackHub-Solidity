@@ -2,6 +2,7 @@
 pragma solidity ^0.8.20;
 
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 error InvalidParams();
 error NotJudge();
@@ -12,6 +13,7 @@ error AlreadyClaimed();
 error InsufficientTokens();
 error AlreadyConcluded();
 error AlreadySubmitted();
+error TokenTransferFailed();
 
 interface IHackHubFactory {
     function hackathonConcluded(address hackathon) external;
@@ -21,38 +23,40 @@ interface IHackHubFactory {
 contract Hackathon is Ownable {
     struct Judge {
         address addr;
-        string  name;
     }
     struct Project {
         address submitter;
-        address prizeRecipient;   // address to receive prize (can be different from submitter)
+        address prizeRecipient;
         string  sourceCode;
         string  documentation;
     }
 
     string  public hackathonName;
-    uint256 public startTime;             // Unix timestamp for submission start
-    uint256 public submissionEndTime;     // Unix timestamp for submission end (evaluation starts after this)
-    uint256 public startDate;             // Start date (YYYYMMDD format)
-    uint256 public submissionEndDate;     // Submission end date (YYYYMMDD format)
-    uint256 public prizePool;             // in wei
-    uint256 public totalTokens;           // total tokens assigned to all judges
-    bool    public concluded;             // whether hackathon has been concluded
-    address public factory;               // factory contract address
+    uint256 public startTime;
+    uint256 public submissionEndTime;
+    uint256 public startDate;
+    uint256 public submissionEndDate;
+    uint256 public prizePool;
+    uint256 public totalTokens;
+    bool    public concluded;
+    address public factory;
+    
+    address public prizeTokenAddress;
+    bool    public isERC20Prize;
 
     Judge[] public judges;
     Project[] public projects;
     address[] public participants;
 
     mapping(address => bool) public isJudge;
-    mapping(address => uint256) public judgeTokens;  // judge address → number of tokens
+    mapping(address => uint256) public judgeTokens;
     
-    mapping(uint256 => uint256) public projectTokens; // projectId → tokens received
-    mapping(uint256 => bool) public prizeClaimed;   // projectId → has claimed prize
-    mapping(address => mapping(uint256 => uint256)) public judgeVotes; // judge => projectId => amount voted
+    mapping(uint256 => uint256) public projectTokens;
+    mapping(uint256 => bool) public prizeClaimed;
+    mapping(address => mapping(uint256 => uint256)) public judgeVotes;
 
     mapping(address => uint256) public participantProjectId;
-    mapping(address => bool) public hasSubmitted; // track if address is already a participant
+    mapping(address => bool) public hasSubmitted;
 
     event ProjectSubmitted(uint256 indexed projectId, address indexed submitter);
     event ProjectEdited(uint256 indexed projectId, address indexed submitter);
@@ -89,19 +93,31 @@ contract Hackathon is Ownable {
         uint256         _submissionEndDate,
         uint256         _submissionEndTime,
         address[]memory _judgeAddrs,
-        string[] memory _judgeNames,
-        uint256[]memory _tokenPerJudge
+        uint256[]memory _tokenPerJudge,
+        address         _prizeTokenAddress,        
+        uint256         _prizeAmount             
     ) payable Ownable(tx.origin) {
-        if ( _startTime >= _submissionEndTime || msg.value == 0 || _judgeAddrs.length != _judgeNames.length || _judgeAddrs.length != _tokenPerJudge.length) 
-            revert InvalidParams();
+        if (_startTime >= _submissionEndTime || _judgeAddrs.length != _tokenPerJudge.length) revert InvalidParams();
+
+        if (_prizeTokenAddress == address(0)) {
+            if (msg.value == 0) revert InvalidParams();
+            prizePool = msg.value;
+            isERC20Prize = false;
+        } else {
+            if (_prizeAmount == 0) revert InvalidParams();
+            prizePool = _prizeAmount;
+            prizeTokenAddress = _prizeTokenAddress;
+            isERC20Prize = true;
+            bool success = IERC20(_prizeTokenAddress).transferFrom(msg.sender, address(this), _prizeAmount);
+            if (!success) revert TokenTransferFailed();
+        }
 
         hackathonName = _name;
         startDate     = _startDate;
         startTime     = _startTime;
         submissionEndDate = _submissionEndDate;
         submissionEndTime = _submissionEndTime;
-        prizePool     = msg.value;
-        factory       = msg.sender;  // factory is the one creating this contract
+        factory       = msg.sender;
 
         for (uint i; i < _judgeAddrs.length; i++) {
             address j = _judgeAddrs[i];
@@ -110,8 +126,7 @@ contract Hackathon is Ownable {
             totalTokens += _tokenPerJudge[i];
             
             judges.push(Judge({
-                addr: j,
-                name: _judgeNames[i]
+                addr: j
             }));
         }
     }
@@ -132,7 +147,7 @@ contract Hackathon is Ownable {
         
         participants.push(msg.sender);
         hasSubmitted[msg.sender] = true;
-        IHackHubFactory(factory).registerParticipant(msg.sender);          // Register participant in factory
+        IHackHubFactory(factory).registerParticipant(msg.sender);
         emit ParticipantRegistered(msg.sender);
         emit ProjectSubmitted(projectId, msg.sender);
     }
@@ -162,13 +177,20 @@ contract Hackathon is Ownable {
         emit Voted(msg.sender, projectId, amount);
     }
 
-    function increasePrizePool() external payable onlyOwner {
-        if (msg.value == 0) revert InvalidParams();
-        prizePool += msg.value;
-        emit PrizeIncreased(prizePool, msg.value);
+    function increasePrizePool(uint256 _amount) external payable onlyOwner {
+        if (isERC20Prize) {
+            if (_amount == 0) revert InvalidParams();
+            bool success = IERC20(prizeTokenAddress).transferFrom(msg.sender, address(this), _amount);
+            if (!success) revert TokenTransferFailed();
+            prizePool += _amount;
+            emit PrizeIncreased(prizePool, _amount);
+        } else {
+            if (msg.value == 0) revert InvalidParams();
+            prizePool += msg.value;
+            emit PrizeIncreased(prizePool, msg.value);
+        }
     }
 
-    /// @notice Project owner can change token allocation for judges (before hackathon is concluded)
     function adjustJudgeTokens(address judge, uint256 newTokenAmount) external duringSubmission onlyOwner {
         if (!isJudge[judge]) revert NotJudge();
         if (concluded) revert AlreadyConcluded();
@@ -195,8 +217,13 @@ contract Hackathon is Ownable {
         prizeClaimed[projectId] = true;
         uint256 projectShare = (prizePool * projectTokens[projectId]) / totalTokens;
         address recipient = projects[projectId].prizeRecipient;
-        (bool success, ) = payable(recipient).call{value: projectShare}("");
-        require(success, "Transfer failed");
+        if (isERC20Prize) {
+            bool success = IERC20(prizeTokenAddress).transfer(recipient, projectShare);
+            if (!success) revert TokenTransferFailed();
+        } else {
+            (bool success, ) = payable(recipient).call{value: projectShare}("");
+            require(success, "Transfer failed");
+        }
         emit prizeShareClaimed(projectId, recipient, projectShare);
     }
 
@@ -211,15 +238,14 @@ contract Hackathon is Ownable {
         if (projectId >= projects.length) return 0;
         return projectTokens[projectId];
     }
-    
+
+    function getPrizeInfo() external view returns (address tokenAddress, bool isERC20, uint256 totalPrize) {return (prizeTokenAddress, isERC20Prize, prizePool);}
     function projectCount() external view returns (uint) { return projects.length; }
     function judgeCount() external view returns (uint) { return judges.length; }
     function participantCount() external view returns (uint) { return participants.length; }
     
     function getParticipants(uint256 startIndex, uint256 endIndex) external view returns (address[] memory) {
-        require(startIndex <= endIndex, "Invalid index range");
-        require(endIndex < participants.length, "End index out of bounds");
-        
+        if (startIndex > endIndex || endIndex >= judges.length) revert InvalidParams();
         uint256 length = endIndex - startIndex + 1;
         address[] memory result = new address[](length);
         for (uint256 i = 0; i < length; i++) {
@@ -229,9 +255,7 @@ contract Hackathon is Ownable {
     }
     
     function getJudges(uint256 startIndex, uint256 endIndex) external view returns (address[] memory) {
-        require(startIndex <= endIndex, "Invalid index range");
-        require(endIndex < judges.length, "End index out of bounds");
-        
+        if (startIndex > endIndex || endIndex >= judges.length) revert InvalidParams();
         uint256 length = endIndex - startIndex + 1;
         address[] memory result = new address[](length);
         for (uint256 i = 0; i < length; i++) {

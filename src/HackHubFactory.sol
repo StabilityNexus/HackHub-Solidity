@@ -35,8 +35,16 @@ contract HackHubFactory {
         uint256         submissionEndDate,
         uint256         submissionEndTime,
         address[]memory judges,
-        uint256[]memory tokenPerJudge
+        uint256[]memory tokenPerJudge,
+        address         prizeToken,
+        uint256         prizeAmount 
     ) external payable {
+        if (prizeToken != address(0)) {
+            bool success = IERC20(prizeToken).transferFrom(msg.sender, address(this), prizeAmount);
+            if (!success) revert TokenTransferFailed();
+            IERC20(prizeToken).approve(address(this), prizeAmount);
+        }
+
         Hackathon h = (new Hackathon){value: msg.value}(
             name,
             startDate,

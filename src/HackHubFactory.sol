@@ -2,25 +2,21 @@
 pragma solidity ^0.8.20;
 
 import {Hackathon} from "./HackHub.sol";
-import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {IERC20Minimal} from "./Interfaces.sol";
+import {HackHubUtils} from "./HackHubUtils.sol";
 
 error OnlyOngoingHackathons();
 error OnlyHackathonContract();
-error HackathonNotOngoing();
-error InvalidIndexRange();
-error EndIndexOutOfBounds();
 error TokenTransferFailed();
 
 contract HackHubFactory {
     address[] public ongoingHackathons;
     address[] public pastHackathons;
     
-    mapping(address => address[]) private participantOngoingHackathons;
-    mapping(address => address[]) private participantPastHackathons;
-
-    mapping(address => address[]) private judgeOngoingHackathons;
-    mapping(address => address[]) private judgePastHackathons;
-
+    mapping(address => address[]) private participantOngoing;
+    mapping(address => address[]) private participantPast;
+    mapping(address => address[]) private judgeOngoing;
+    mapping(address => address[]) private judgePast;
     mapping(address => bool) public isOngoing;
     
     event HackathonCreated(address indexed hackathon, address indexed organizer);
@@ -29,123 +25,102 @@ contract HackHubFactory {
     event JudgeRegistered(address indexed hackathon, address indexed judge);
 
     function createHackathon(
-        string   memory name,
-        uint256         startDate,
-        uint256         startTime, 
-        uint256         submissionEndDate,
-        uint256         submissionEndTime,
-        address[]memory judges,
-        uint256[]memory tokenPerJudge,
-        address         prizeToken,
-        uint256         prizeAmount 
+        string memory name,
+        uint256 startTime, 
+        uint256 endTime,
+        string memory startDate,
+        string memory endDate,
+        address[] memory judges,
+        uint256[] memory tokenPerJudge,
+        string[] memory judgeNames,
+        address prizeToken,
+        uint256 prizeAmount 
     ) external payable {
-        if (prizeToken != address(0)) {
-            bool success = IERC20(prizeToken).transferFrom(msg.sender, address(this), prizeAmount);
-            if (!success) revert TokenTransferFailed();
-            IERC20(prizeToken).approve(address(this), prizeAmount);
-        }
-
         Hackathon h = (new Hackathon){value: msg.value}(
-            name,
-            startDate,
-            startTime,
-            submissionEndDate,
-            submissionEndTime,
-            judges,
-            tokenPerJudge,
-            prizeToken,
-            prizeAmount
+            name, startTime, endTime, startDate, endDate, judges, tokenPerJudge, judgeNames, prizeToken, prizeAmount
         );
-        isOngoing[address(h)] = true;
-        ongoingHackathons.push(address(h));
-
-        for (uint256 i = 0; i < judges.length; i++) {
-            address j = judges[i];
-            judgeOngoingHackathons[j].push(address(h));
-            emit JudgeRegistered(address(h), j);
+        
+        if (prizeToken != address(0)) {
+            if (!IERC20Minimal(prizeToken).transferFrom(msg.sender, address(h), prizeAmount)) {
+                revert TokenTransferFailed();
+            }
         }
         
-        emit HackathonCreated(address(h), msg.sender);
+        address hackAddr = address(h);
+        isOngoing[hackAddr] = true;
+        ongoingHackathons.push(hackAddr);
+
+        uint256 judgeCount = judges.length;
+        for (uint256 i; i < judgeCount;) {
+            address j = judges[i];
+            judgeOngoing[j].push(hackAddr);
+            emit JudgeRegistered(hackAddr, j);
+            unchecked { ++i; }
+        }
+        
+        emit HackathonCreated(hackAddr, msg.sender);
     }
 
     function registerParticipant(address participant) external {
         if (!isOngoing[msg.sender]) revert OnlyOngoingHackathons();
-        participantOngoingHackathons[participant].push(msg.sender);
+        participantOngoing[participant].push(msg.sender);
         emit ParticipantRegistered(msg.sender, participant);
     }
 
     function hackathonConcluded(address hackathon) external {
-        if (msg.sender != hackathon) revert OnlyHackathonContract();
-        if (!isOngoing[hackathon]) revert HackathonNotOngoing();
-        for (uint i = 0; i < ongoingHackathons.length; i++) {
-            if (ongoingHackathons[i] == hackathon) {
-                ongoingHackathons[i] = ongoingHackathons[ongoingHackathons.length - 1];
-                ongoingHackathons.pop();
-                break;
-            }
-        }
+        if (msg.sender != hackathon || !isOngoing[hackathon]) revert OnlyHackathonContract();
+        
+        HackHubUtils.removeFromArray(ongoingHackathons, hackathon);
         pastHackathons.push(hackathon);
         isOngoing[hackathon] = false;
-        Hackathon hackHubContract = Hackathon(hackathon);
-        uint256 judgeCount = hackHubContract.judgeCount();
         
-        for (uint256 i = 0; i < judgeCount; i++) {
-            address[] memory judges = hackHubContract.getJudges(i, i);
+        Hackathon h = Hackathon(hackathon);
+        uint256 judgeCount = h.judgeCount();
+        
+        for (uint256 i; i < judgeCount;) {
+            address[] memory judges = h.getJudges(i, i);
             if (judges.length > 0) {
-                address judge = judges[0];
-                _moveHackathonBetweenArrays(judgeOngoingHackathons[judge], judgePastHackathons[judge], hackathon);
+                HackHubUtils.moveItem(judgeOngoing[judges[0]], judgePast[judges[0]], hackathon);
             }
+            unchecked { ++i; }
         }
 
-        uint256 participantCount = hackHubContract.participantCount();
-        for (uint256 i = 0; i < participantCount; i++) {
-            address[] memory participants = hackHubContract.getParticipants(i, i);
-            if (participants.length > 0) {
-                address participant = participants[0];
-                _moveHackathonBetweenArrays(participantOngoingHackathons[participant], participantPastHackathons[participant], hackathon);
-            }
+        address[] memory participants = h.getParticipants();
+        for (uint256 i; i < participants.length;) {
+            HackHubUtils.moveItem(participantOngoing[participants[i]], participantPast[participants[i]], hackathon);
+            unchecked { ++i; }
         }
 
         emit HackathonConcluded(hackathon);
     }
     
-    function getOngoingCount() external view returns (uint256) { return ongoingHackathons.length; }
-    function getPastCount() external view returns (uint256) { return pastHackathons.length; }
-    
-    function getOngoingHackathons(uint256 startIndex, uint256 endIndex) external view returns (address[] memory) { return _getSlice(ongoingHackathons, startIndex, endIndex);}
-    function getPastHackathons(uint256 startIndex, uint256 endIndex) external view returns (address[] memory) { return _getSlice(pastHackathons, startIndex, endIndex);}
-    
-    function getParticipantOngoingHackathons(address participant, uint256 startIndex, uint256 endIndex) external view returns (address[] memory) { return _getSlice(participantOngoingHackathons[participant], startIndex, endIndex); }
-    function getParticipantPastHackathons(address participant, uint256 startIndex, uint256 endIndex) external view returns (address[] memory) { return _getSlice(participantPastHackathons[participant], startIndex, endIndex); }
-    
-    function getJudgeOngoingHackathons(address judge, uint256 startIndex, uint256 endIndex) external view returns (address[] memory) { return _getSlice(judgeOngoingHackathons[judge], startIndex, endIndex); }
-    function getJudgePastHackathons(address judge, uint256 startIndex, uint256 endIndex) external view returns (address[] memory) { return _getSlice(judgePastHackathons[judge], startIndex, endIndex); }
-
-    function getParticipantOngoingCount(address participant) external view returns (uint256) { return participantOngoingHackathons[participant].length; }
-    function getParticipantPastCount(address participant) external view returns (uint256) { return participantPastHackathons[participant].length; }
-
-    function getJudgeOngoingCount(address judge) external view returns (uint256) { return judgeOngoingHackathons[judge].length; }
-    function getJudgePastCount(address judge) external view returns (uint256) { return judgePastHackathons[judge].length; }
-
-    function _getSlice(address[] storage source, uint256 startIndex, uint256 endIndex) internal view returns (address[] memory) {
-        if (startIndex > endIndex) revert InvalidIndexRange();
-        if (endIndex >= source.length) revert EndIndexOutOfBounds();
-        uint256 length = endIndex - startIndex + 1;
-        address[] memory result = new address[](length);
-        for (uint256 i = 0; i < length; i++) {
-            result[i] = source[startIndex + i];
-        }
-        return result;
+    function getCounts() external view returns (uint256 ongoing, uint256 past) {
+        return (ongoingHackathons.length, pastHackathons.length);
     }
 
-    function _moveHackathonBetweenArrays(address[] storage fromArr, address[] storage toArr, address hackathon) internal {
-        toArr.push(hackathon);
-        for (uint256 i = 0; i < fromArr.length; i++) {
-            if (fromArr[i] == hackathon) {
-                fromArr[i] = fromArr[fromArr.length - 1];
-                fromArr.pop();
-                return;
-            }
-        }
+    function getUserCounts(address user) external view returns (
+        uint256 participantOngoingCount, 
+        uint256 participantPastCount, 
+        uint256 judgeOngoingCount, 
+        uint256 judgePastCount
+    ) {
+        return (
+            participantOngoing[user].length,
+            participantPast[user].length,
+            judgeOngoing[user].length,
+            judgePast[user].length
+        );
+    }
+    
+    function getHackathons(uint256 start, uint256 end, bool ongoing) external view returns (address[] memory) {
+        return HackHubUtils.getSlice(ongoing ? ongoingHackathons : pastHackathons, start, end);
+    }
+    function getParticipantHackathons(address participant, uint256 start, uint256 end, bool ongoing) 
+        external view returns (address[] memory) { 
+        return HackHubUtils.getSlice(ongoing ? participantOngoing[participant] : participantPast[participant], start, end); 
+    }
+    function getJudgeHackathons(address judge, uint256 start, uint256 end, bool ongoing) 
+        external view returns (address[] memory) { 
+        return HackHubUtils.getSlice(ongoing ? judgeOngoing[judge] : judgePast[judge], start, end); 
     }
 }

@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
-import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {Ownable, IERC20Minimal, IHackHubFactory} from "./Interfaces.sol";
 
 error InvalidParams();
 error NotJudge();
@@ -15,34 +14,31 @@ error AlreadyConcluded();
 error AlreadySubmitted();
 error TokenTransferFailed();
 
-interface IHackHubFactory {
-    function hackathonConcluded(address hackathon) external;
-    function registerParticipant(address participant) external;
-}
-
 contract Hackathon is Ownable {
     struct Judge {
         address addr;
+        uint256 tokens;
+        string name;
     }
+    
     struct Project {
         address submitter;
-        address prizeRecipient;
-        string  sourceCode;
-        string  documentation;
+        address recipient;
+        string sourceCode;
+        string docs;
     }
 
-    string  public hackathonName;
+    string public name;
     uint256 public startTime;
-    uint256 public submissionEndTime;
-    uint256 public startDate;
-    uint256 public submissionEndDate;
+    uint256 public endTime;
+    string public startDate;
+    string public endDate;
     uint256 public prizePool;
     uint256 public totalTokens;
-    bool    public concluded;
+    address public prizeToken;
     address public factory;
-    
-    address public prizeTokenAddress;
-    bool    public isERC20Prize;
+    bool public concluded;
+    bool public isERC20Prize;
 
     Judge[] public judges;
     Project[] public projects;
@@ -50,217 +46,191 @@ contract Hackathon is Ownable {
 
     mapping(address => bool) public isJudge;
     mapping(address => uint256) public judgeTokens;
-    
+    mapping(address => uint256) public remainingJudgeTokens;
     mapping(uint256 => uint256) public projectTokens;
     mapping(uint256 => bool) public prizeClaimed;
     mapping(address => mapping(uint256 => uint256)) public judgeVotes;
-
     mapping(address => uint256) public participantProjectId;
     mapping(address => bool) public hasSubmitted;
 
-    event ProjectSubmitted(uint256 indexed projectId, address indexed submitter);
-    event ProjectEdited(uint256 indexed projectId, address indexed submitter);
+    event ProjectSubmitted(uint256 indexed id, address indexed submitter);
     event Voted(address indexed judge, uint256 indexed projectId, uint256 amount);
-    event PrizeIncreased(uint256 newPrizePool, uint256 addedAmount);
-    event TokensAdjusted(address indexed judge, uint256 newTokenAmount);
-    event prizeShareClaimed(uint256 indexed projectId, address indexed submitter, uint256 amount);
-    event HackathonConcluded();
-    event ParticipantRegistered(address indexed participant);
+    event PrizeClaimed(uint256 indexed projectId, uint256 amount);
+    event PrizePoolAdjusted(uint256 newAmount);
 
     modifier duringSubmission() {
-        if (block.timestamp < startTime || block.timestamp > submissionEndTime) {
-            revert SubmissionClosed();
-        }
+        if (block.timestamp < startTime || block.timestamp > endTime) revert SubmissionClosed();
         _;
     }
+    
     modifier duringEvaluation() {
-        if (block.timestamp <= submissionEndTime || concluded) {
-            revert SubmissionClosed();
-        }
+        if (block.timestamp <= endTime || concluded) revert SubmissionClosed();
         _;
     }
+    
     modifier afterConcluded() {
-        if (!concluded) {
-            revert NotAfterEndTime();
-        }
+        if (!concluded) revert NotAfterEndTime();
         _;
     }
     
     constructor(
-        string   memory _name,
-        uint256         _startDate,
-        uint256         _startTime,
-        uint256         _submissionEndDate,
-        uint256         _submissionEndTime,
-        address[]memory _judgeAddrs,
-        uint256[]memory _tokenPerJudge,
-        address         _prizeTokenAddress,        
-        uint256         _prizeAmount             
+        string memory _name,
+        uint256 _startTime,
+        uint256 _endTime,
+        string memory _startDate,
+        string memory _endDate,
+        address[] memory _judges,
+        uint256[] memory _tokens,
+        string[] memory _judgeNames,
+        address _prizeToken,
+        uint256 _prizeAmount
     ) payable Ownable(tx.origin) {
-        if (_startTime >= _submissionEndTime || _judgeAddrs.length != _tokenPerJudge.length) revert InvalidParams();
+        if (_startTime >= _endTime || _judges.length != _tokens.length || _judges.length != _judgeNames.length) revert InvalidParams();
 
-        if (_prizeTokenAddress == address(0)) {
+        name = _name;
+        startTime = _startTime;
+        endTime = _endTime;
+        startDate = _startDate;
+        endDate = _endDate;
+        factory = msg.sender;
+
+        if (_prizeToken == address(0)) {
             if (msg.value == 0) revert InvalidParams();
             prizePool = msg.value;
-            isERC20Prize = false;
         } else {
             if (_prizeAmount == 0) revert InvalidParams();
             prizePool = _prizeAmount;
-            prizeTokenAddress = _prizeTokenAddress;
+            prizeToken = _prizeToken;
             isERC20Prize = true;
-            bool success = IERC20(_prizeTokenAddress).transferFrom(msg.sender, address(this), _prizeAmount);
-            if (!success) revert TokenTransferFailed();
         }
 
-        hackathonName = _name;
-        startDate     = _startDate;
-        startTime     = _startTime;
-        submissionEndDate = _submissionEndDate;
-        submissionEndTime = _submissionEndTime;
-        factory       = msg.sender;
-
-        for (uint i; i < _judgeAddrs.length; i++) {
-            address j = _judgeAddrs[i];
+        uint256 judgesLength = _judges.length;
+        for (uint256 i; i < judgesLength;) {
+            address j = _judges[i];
+            uint256 t = _tokens[i];
             isJudge[j] = true;
-            judgeTokens[j] = _tokenPerJudge[i];
-            totalTokens += _tokenPerJudge[i];
-            
-            judges.push(Judge({
-                addr: j
-            }));
+            totalTokens += t;
+            judgeTokens[j] = t;
+            remainingJudgeTokens[j] = t;
+            judges.push(Judge(j, t, _judgeNames[i]));
+            unchecked { ++i; }
         }
     }
 
-    function submitProject(string memory _sourceCode, string memory _documentation, address _prizeRecipient) external duringSubmission {
+    function submitProject(string calldata _sourceCode, string calldata _docs, address _recipient) 
+        external duringSubmission {
         if (hasSubmitted[msg.sender]) revert AlreadySubmitted();
-        uint256 projectId = projects.length;
-        address recipient = _prizeRecipient == address(0) ? msg.sender : _prizeRecipient;
         
-        Project memory newProject = Project({
-            submitter: msg.sender,
-            prizeRecipient: recipient,
-            sourceCode: _sourceCode,
-            documentation: _documentation
-        });
-        participantProjectId[msg.sender] = projectId;
-        projects.push(newProject);
+        uint256 id = projects.length;
+        address recipient = _recipient == address(0) ? msg.sender : _recipient;
         
-        participants.push(msg.sender);
+        projects.push(Project(msg.sender, recipient, _sourceCode, _docs));
         hasSubmitted[msg.sender] = true;
+        participantProjectId[msg.sender] = id;
+        participants.push(msg.sender);
         IHackHubFactory(factory).registerParticipant(msg.sender);
-        emit ParticipantRegistered(msg.sender);
-        emit ProjectSubmitted(projectId, msg.sender);
-    }
-
-    function editProject(string memory _sourceCode, string memory _documentation, address _prizeRecipient) external duringSubmission {
-        if (!hasSubmitted[msg.sender]) revert InvalidParams();
-        uint256 projectId = participantProjectId[msg.sender];
-        address recipient = _prizeRecipient == address(0) ? msg.sender : _prizeRecipient;
-        
-        projects[projectId].sourceCode = _sourceCode;
-        projects[projectId].documentation = _documentation;
-        projects[projectId].prizeRecipient = recipient;
-        emit ProjectEdited(projectId, msg.sender);
+        emit ProjectSubmitted(id, msg.sender);
     }
 
     function vote(uint256 projectId, uint256 amount) external duringEvaluation {
-        if (!isJudge[msg.sender]) revert NotJudge();
-        if (projectId >= projects.length) revert InvalidParams();
+        if (!isJudge[msg.sender] || projectId >= projects.length) revert InvalidParams();
         
         uint256 currentVote = judgeVotes[msg.sender][projectId];
-        uint256 availableTokens = judgeTokens[msg.sender] + currentVote;
-        if (availableTokens < amount) revert InsufficientTokens();
+        uint256 available = remainingJudgeTokens[msg.sender] + currentVote;
+        if (available < amount) revert InsufficientTokens();
         
-        judgeTokens[msg.sender] = availableTokens - amount;
+        remainingJudgeTokens[msg.sender] = available - amount;
         projectTokens[projectId] = projectTokens[projectId] - currentVote + amount;
         judgeVotes[msg.sender][projectId] = amount;
         emit Voted(msg.sender, projectId, amount);
     }
 
-    function increasePrizePool(uint256 _amount) external payable onlyOwner {
-        if (isERC20Prize) {
-            if (_amount == 0) revert InvalidParams();
-            bool success = IERC20(prizeTokenAddress).transferFrom(msg.sender, address(this), _amount);
-            if (!success) revert TokenTransferFailed();
-            prizePool += _amount;
-            emit PrizeIncreased(prizePool, _amount);
-        } else {
-            if (msg.value == 0) revert InvalidParams();
-            prizePool += msg.value;
-            emit PrizeIncreased(prizePool, msg.value);
-        }
-    }
-
-    function adjustJudgeTokens(address judge, uint256 newTokenAmount) external duringSubmission onlyOwner {
-        if (!isJudge[judge]) revert NotJudge();
-        if (concluded) revert AlreadyConcluded();
-        
-        uint256 oldTokens = judgeTokens[judge];
-        totalTokens = totalTokens + newTokenAmount - oldTokens;
-        judgeTokens[judge] = newTokenAmount;        
-        emit TokensAdjusted(judge, newTokenAmount);
-    }
-
     function concludeHackathon() external duringEvaluation onlyOwner {
         if (concluded) revert AlreadyConcluded();
-        concluded = true;        
+        concluded = true;
         IHackHubFactory(factory).hackathonConcluded(address(this));
-        emit HackathonConcluded();
     }
 
     function claimPrize(uint256 projectId) external afterConcluded {
-        if (projectId >= projects.length) revert InvalidParams();
-        if (projects[projectId].submitter != msg.sender) revert InvalidParams();
-        if (prizeClaimed[projectId]) revert AlreadyClaimed();
-        if (totalTokens == 0) revert NoVotesCast();
+        if (projectId >= projects.length || projects[projectId].submitter != msg.sender || 
+            prizeClaimed[projectId] || totalTokens == 0) revert InvalidParams();
 
         prizeClaimed[projectId] = true;
-        uint256 projectShare = (prizePool * projectTokens[projectId]) / totalTokens;
-        address recipient = projects[projectId].prizeRecipient;
+        uint256 share = (prizePool * projectTokens[projectId]) / totalTokens;
+        address recipient = projects[projectId].recipient;
+        
         if (isERC20Prize) {
-            bool success = IERC20(prizeTokenAddress).transfer(recipient, projectShare);
-            if (!success) revert TokenTransferFailed();
+            if (!IERC20Minimal(prizeToken).transfer(recipient, share)) revert TokenTransferFailed();
         } else {
-            (bool success, ) = payable(recipient).call{value: projectShare}("");
-            require(success, "Transfer failed");
+            (bool success,) = payable(recipient).call{value: share}("");
+            if (!success) revert TokenTransferFailed();
         }
-        emit prizeShareClaimed(projectId, recipient, projectShare);
+        emit PrizeClaimed(projectId, share);
+    }
+
+    function adjustJudgeTokens(address judge, uint256 amount) external onlyOwner duringSubmission {
+        if (!isJudge[judge]) revert InvalidParams();
+        
+        uint256 oldAmount = judgeTokens[judge];
+        judgeTokens[judge] = amount;
+        if (amount > oldAmount) totalTokens += (amount - oldAmount);
+        else totalTokens -= (oldAmount - amount);
+
+        remainingJudgeTokens[judge] = amount;
+        uint256 judgesCount = judges.length;
+        for (uint256 i = 0; i < judgesCount; ++i) {
+            if (judges[i].addr == judge) {
+                judges[i].tokens = amount;
+                break;
+            }
+        }
+    }
+
+    function adjustPrizePool(uint256 newAmount) external payable onlyOwner {
+        if (newAmount <= prizePool) revert InvalidParams();
+        if (concluded) revert AlreadyConcluded();
+        
+        if (isERC20Prize) {
+            prizePool = newAmount;
+        } else {
+            uint256 difference = newAmount - prizePool;
+            if (msg.value < difference) revert InvalidParams();
+            prizePool = newAmount;
+        }
+        
+        emit PrizePoolAdjusted(newAmount);
     }
 
     function getProjectPrize(uint256 projectId) external view returns (uint256) {
-        if (projectId >= projects.length) return 0;
-        if (totalTokens == 0) return 0;
+        if (projectId >= projects.length || totalTokens == 0) return 0;
         return (prizePool * projectTokens[projectId]) / totalTokens;
     }
 
-
-    function getProjectTokens(uint256 projectId) external view returns (uint256) {
-        if (projectId >= projects.length) return 0;
-        return projectTokens[projectId];
-    }
-
-    function getPrizeInfo() external view returns (address tokenAddress, bool isERC20, uint256 totalPrize) {return (prizeTokenAddress, isERC20Prize, prizePool);}
-    function projectCount() external view returns (uint) { return projects.length; }
-    function judgeCount() external view returns (uint) { return judges.length; }
-    function participantCount() external view returns (uint) { return participants.length; }
+    function projectCount() external view returns (uint256) { return projects.length; }
+    function judgeCount() external view returns (uint256) { return judges.length; }
     
-    function getParticipants(uint256 startIndex, uint256 endIndex) external view returns (address[] memory) {
-        if (startIndex > endIndex || endIndex >= judges.length) revert InvalidParams();
-        uint256 length = endIndex - startIndex + 1;
+    function getJudges(uint256 start, uint256 end) external view returns (address[] memory) {
+        if (start > end || end >= judges.length) revert InvalidParams();
+        uint256 length = end - start + 1;
         address[] memory result = new address[](length);
-        for (uint256 i = 0; i < length; i++) {
-            result[i] = participants[startIndex + i];
+        for (uint256 i; i < length;) {
+            result[i] = judges[start + i].addr;
+            unchecked { ++i; }
         }
         return result;
     }
     
-    function getJudges(uint256 startIndex, uint256 endIndex) external view returns (address[] memory) {
-        if (startIndex > endIndex || endIndex >= judges.length) revert InvalidParams();
-        uint256 length = endIndex - startIndex + 1;
-        address[] memory result = new address[](length);
-        for (uint256 i = 0; i < length; i++) {
-            result[i] = judges[startIndex + i].addr;
+    function getJudgeNames(uint256 start, uint256 end) external view returns (string[] memory) {
+        if (start > end || end >= judges.length) revert InvalidParams();
+        uint256 length = end - start + 1;
+        string[] memory result = new string[](length);
+        for (uint256 i; i < length;) {
+            result[i] = judges[start + i].name;
+            unchecked { ++i; }
         }
         return result;
     }
+
+    function participantCount() external view returns (uint256) { return participants.length; }
+    function getParticipants() external view returns (address[] memory) { return participants; }
 }

@@ -2,6 +2,7 @@
 pragma solidity ^0.8.20;
 
 import {Ownable, IERC20Minimal, IHackHubFactory} from "./Interfaces.sol";
+import {HackHubUtils} from "./HackHubUtils.sol";
 
 error InvalidParams();
 error NotJudge();
@@ -15,15 +16,11 @@ error AlreadySubmitted();
 error TokenTransferFailed();
 
 contract Hackathon is Ownable {
-    struct Judge {
-        address addr;
-        uint256 tokens;
-        string name;
-    }
     
     struct Project {
         address submitter;
         address recipient;
+        string name;
         string sourceCode;
         string docs;
     }
@@ -33,6 +30,7 @@ contract Hackathon is Ownable {
     uint256 public endTime;
     string public startDate;
     string public endDate;
+    string public imageURL;
     uint256 public prizePool;
     uint256 public totalTokens;
     address public prizeToken;
@@ -40,9 +38,9 @@ contract Hackathon is Ownable {
     bool public concluded;
     bool public isERC20Prize;
 
-    Judge[] public judges;
     Project[] public projects;
     address[] public participants;
+    address[] private judgeAddresses;
 
     mapping(address => bool) public isJudge;
     mapping(address => uint256) public judgeTokens;
@@ -81,17 +79,18 @@ contract Hackathon is Ownable {
         string memory _endDate,
         address[] memory _judges,
         uint256[] memory _tokens,
-        string[] memory _judgeNames,
         address _prizeToken,
-        uint256 _prizeAmount
+        uint256 _prizeAmount,
+        string memory _imageURL
     ) payable Ownable(tx.origin) {
-        if (_startTime >= _endTime || _judges.length != _tokens.length || _judges.length != _judgeNames.length) revert InvalidParams();
+        if (_startTime >= _endTime || _judges.length != _tokens.length) revert InvalidParams();
 
         name = _name;
         startTime = _startTime;
         endTime = _endTime;
         startDate = _startDate;
         endDate = _endDate;
+        imageURL = _imageURL;
         factory = msg.sender;
 
         if (_prizeToken == address(0)) {
@@ -112,24 +111,28 @@ contract Hackathon is Ownable {
             totalTokens += t;
             judgeTokens[j] = t;
             remainingJudgeTokens[j] = t;
-            judges.push(Judge(j, t, _judgeNames[i]));
+            judgeAddresses.push(j);
             unchecked { ++i; }
         }
     }
 
-    function submitProject(string calldata _sourceCode, string calldata _docs, address _recipient) 
+    function submitProject( string calldata _name, string calldata _sourceCode, string calldata _docs, address _recipient) 
         external duringSubmission {
-        if (hasSubmitted[msg.sender]) revert AlreadySubmitted();
-        
-        uint256 id = projects.length;
         address recipient = _recipient == address(0) ? msg.sender : _recipient;
         
-        projects.push(Project(msg.sender, recipient, _sourceCode, _docs));
-        hasSubmitted[msg.sender] = true;
-        participantProjectId[msg.sender] = id;
-        participants.push(msg.sender);
-        IHackHubFactory(factory).registerParticipant(msg.sender);
-        emit ProjectSubmitted(id, msg.sender);
+        if (hasSubmitted[msg.sender]) {
+            uint256 projectId = participantProjectId[msg.sender];
+            projects[projectId] = Project(msg.sender, recipient, _name, _sourceCode, _docs);
+            emit ProjectSubmitted(projectId, msg.sender);
+        } else {
+            uint256 id = projects.length;
+            projects.push(Project(msg.sender, recipient, _name, _sourceCode, _docs));
+            hasSubmitted[msg.sender] = true;
+            participantProjectId[msg.sender] = id;
+            participants.push(msg.sender);
+            IHackHubFactory(factory).registerParticipant(msg.sender);
+            emit ProjectSubmitted(id, msg.sender);
+        }
     }
 
     function vote(uint256 projectId, uint256 amount) external duringEvaluation {
@@ -169,21 +172,35 @@ contract Hackathon is Ownable {
     }
 
     function adjustJudgeTokens(address judge, uint256 amount) external onlyOwner duringSubmission {
-        if (!isJudge[judge]) revert InvalidParams();
-        
         uint256 oldAmount = judgeTokens[judge];
-        judgeTokens[judge] = amount;
-        if (amount > oldAmount) totalTokens += (amount - oldAmount);
-        else totalTokens -= (oldAmount - amount);
-
-        remainingJudgeTokens[judge] = amount;
-        uint256 judgesCount = judges.length;
-        for (uint256 i = 0; i < judgesCount; ++i) {
-            if (judges[i].addr == judge) {
-                judges[i].tokens = amount;
-                break;
+        
+        // Add new judge if not present and amount > 0
+        if (!isJudge[judge] && amount > 0) {
+            isJudge[judge] = true;
+            judgeAddresses.push(judge);
+            IHackHubFactory(factory).registerJudge(judge);
+        }
+        // Remove judge if amount is 0
+        else if (isJudge[judge] && amount == 0) {
+            isJudge[judge] = false;
+            // Remove from judgeAddresses array
+            uint256 length = judgeAddresses.length;
+            for (uint256 i = 0; i < length; i++) {
+                if (judgeAddresses[i] == judge) {
+                    judgeAddresses[i] = judgeAddresses[length - 1];
+                    judgeAddresses.pop();
+                    break;
+                }
             }
         }
+        
+        // Update mappings
+        judgeTokens[judge] = amount;
+        remainingJudgeTokens[judge] = amount;
+        
+        // Update total tokens
+        if (amount > oldAmount) totalTokens += (amount - oldAmount);
+        else if (oldAmount > amount) totalTokens -= (oldAmount - amount);
     }
 
     function adjustPrizePool(uint256 newAmount) external payable onlyOwner {
@@ -207,29 +224,24 @@ contract Hackathon is Ownable {
     }
 
     function projectCount() external view returns (uint256) { return projects.length; }
-    function judgeCount() external view returns (uint256) { return judges.length; }
+    function judgeCount() external view returns (uint256) { return judgeAddresses.length; }
     
     function getJudges(uint256 start, uint256 end) external view returns (address[] memory) {
-        if (start > end || end >= judges.length) revert InvalidParams();
+        if (start > end || end >= judgeAddresses.length) revert InvalidParams();
         uint256 length = end - start + 1;
         address[] memory result = new address[](length);
         for (uint256 i; i < length;) {
-            result[i] = judges[start + i].addr;
+            result[i] = judgeAddresses[start + i];
             unchecked { ++i; }
         }
         return result;
     }
     
-    function getJudgeNames(uint256 start, uint256 end) external view returns (string[] memory) {
-        if (start > end || end >= judges.length) revert InvalidParams();
-        uint256 length = end - start + 1;
-        string[] memory result = new string[](length);
-        for (uint256 i; i < length;) {
-            result[i] = judges[start + i].name;
-            unchecked { ++i; }
-        }
-        return result;
+    function getAllJudges() external view returns (address[] memory) {
+        return judgeAddresses;
     }
+    
+
 
     function participantCount() external view returns (uint256) { return participants.length; }
     function getParticipants() external view returns (address[] memory) { return participants; }

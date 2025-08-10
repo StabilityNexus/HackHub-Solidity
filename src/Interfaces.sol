@@ -11,6 +11,7 @@ interface IERC20Minimal {
 interface IHackHubFactory {
     function hackathonConcluded(address hackathon) external;
     function registerParticipant(address participant) external;
+    function registerJudge(address judge) external;
 }
 
 abstract contract Ownable {
@@ -47,4 +48,4 @@ abstract contract Ownable {
         _owner = newOwner;
         emit OwnershipTransferred(oldOwner, newOwner);
     }
-} 
+}  

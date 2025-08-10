@@ -1,15 +1,16 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
+import {HackHubUtils} from "./HackHubUtils.sol";
+import {HackathonAdmin} from "./HackathonAdmin.sol";
 import {Hackathon} from "./HackHub.sol";
 import {IERC20Minimal} from "./Interfaces.sol";
-import {HackHubUtils} from "./HackHubUtils.sol";
-
-error OnlyOngoingHackathons();
-error OnlyHackathonContract();
-error TokenTransferFailed();
 
 contract HackHubFactory {
+    
+    error TokenTransferFailed();
+    
+    event HackathonCreated(address indexed hackathon, address indexed organizer);
     address[] public ongoingHackathons;
     address[] public pastHackathons;
     
@@ -18,11 +19,6 @@ contract HackHubFactory {
     mapping(address => address[]) private judgeOngoing;
     mapping(address => address[]) private judgePast;
     mapping(address => bool) public isOngoing;
-    
-    event HackathonCreated(address indexed hackathon, address indexed organizer);
-    event HackathonConcluded(address indexed hackathon);
-    event ParticipantRegistered(address indexed hackathon, address indexed participant);
-    event JudgeRegistered(address indexed hackathon, address indexed judge);
 
     function createHackathon(
         string memory name,
@@ -32,66 +28,51 @@ contract HackHubFactory {
         string memory endDate,
         address[] memory judges,
         uint256[] memory tokenPerJudge,
-        string[] memory judgeNames,
         address prizeToken,
-        uint256 prizeAmount 
+        uint256 prizeAmount,
+        string memory imageURL
     ) external payable {
+        // Create the hackathon contract directly
         Hackathon h = (new Hackathon){value: msg.value}(
-            name, startTime, endTime, startDate, endDate, judges, tokenPerJudge, judgeNames, prizeToken, prizeAmount
+            name,
+            startTime,
+            endTime,
+            startDate,
+            endDate,
+            judges,
+            tokenPerJudge,
+            prizeToken,
+            prizeAmount,
+            imageURL
         );
-        
+        address hackathonAddr = address(h);
+
+        // Handle ERC20 prize token transfer if needed
         if (prizeToken != address(0)) {
-            if (!IERC20Minimal(prizeToken).transferFrom(msg.sender, address(h), prizeAmount)) {
+            if (!IERC20Minimal(prizeToken).transferFrom(msg.sender, hackathonAddr, prizeAmount)) {
                 revert TokenTransferFailed();
             }
         }
-        
-        address hackAddr = address(h);
-        isOngoing[hackAddr] = true;
-        ongoingHackathons.push(hackAddr);
 
-        uint256 judgeCount = judges.length;
-        for (uint256 i; i < judgeCount;) {
-            address j = judges[i];
-            judgeOngoing[j].push(hackAddr);
-            emit JudgeRegistered(hackAddr, j);
-            unchecked { ++i; }
-        }
-        
-        emit HackathonCreated(hackAddr, msg.sender);
+        // Register the hackathon
+        isOngoing[hackathonAddr] = true;
+        ongoingHackathons.push(hackathonAddr);
+        emit HackathonCreated(hackathonAddr, msg.sender);
     }
 
     function registerParticipant(address participant) external {
-        if (!isOngoing[msg.sender]) revert OnlyOngoingHackathons();
-        participantOngoing[participant].push(msg.sender);
-        emit ParticipantRegistered(msg.sender, participant);
+        HackathonAdmin.registerParticipant(isOngoing, participantOngoing, participant);
+    }
+
+    function registerJudge(address judge) external {
+        HackathonAdmin.registerJudge(isOngoing, judgeOngoing, judge);
     }
 
     function hackathonConcluded(address hackathon) external {
-        if (msg.sender != hackathon || !isOngoing[hackathon]) revert OnlyHackathonContract();
-        
-        HackHubUtils.removeFromArray(ongoingHackathons, hackathon);
-        pastHackathons.push(hackathon);
-        isOngoing[hackathon] = false;
-        
-        Hackathon h = Hackathon(hackathon);
-        uint256 judgeCount = h.judgeCount();
-        
-        for (uint256 i; i < judgeCount;) {
-            address[] memory judges = h.getJudges(i, i);
-            if (judges.length > 0) {
-                HackHubUtils.moveItem(judgeOngoing[judges[0]], judgePast[judges[0]], hackathon);
-            }
-            unchecked { ++i; }
-        }
-
-        address[] memory participants = h.getParticipants();
-        for (uint256 i; i < participants.length;) {
-            HackHubUtils.moveItem(participantOngoing[participants[i]], participantPast[participants[i]], hackathon);
-            unchecked { ++i; }
-        }
-
-        emit HackathonConcluded(hackathon);
+        HackathonAdmin.concludeHackathon(
+            ongoingHackathons, pastHackathons, isOngoing,
+            participantOngoing, participantPast, judgeOngoing, judgePast, hackathon
+        );
     }
     
     function getCounts() external view returns (uint256 ongoing, uint256 past) {
@@ -104,11 +85,8 @@ contract HackHubFactory {
         uint256 judgeOngoingCount, 
         uint256 judgePastCount
     ) {
-        return (
-            participantOngoing[user].length,
-            participantPast[user].length,
-            judgeOngoing[user].length,
-            judgePast[user].length
+        return HackathonAdmin.getUserCounts(
+            participantOngoing, participantPast, judgeOngoing, judgePast, user
         );
     }
     

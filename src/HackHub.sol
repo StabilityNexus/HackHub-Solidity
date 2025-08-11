@@ -156,10 +156,12 @@ contract Hackathon is Ownable {
 
     function claimPrize(uint256 projectId) external afterConcluded {
         if (projectId >= projects.length || projects[projectId].submitter != msg.sender || 
-            prizeClaimed[projectId] || totalTokens == 0) revert InvalidParams();
+            prizeClaimed[projectId]) revert InvalidParams();
+
+        uint256 share = getProjectPrize(projectId);
+        if (share == 0) revert InvalidParams();
 
         prizeClaimed[projectId] = true;
-        uint256 share = (prizePool * projectTokens[projectId]) / totalTokens;
         address recipient = projects[projectId].recipient;
         
         if (isERC20Prize) {
@@ -203,22 +205,24 @@ contract Hackathon is Ownable {
         else if (oldAmount > amount) totalTokens -= (oldAmount - amount);
     }
 
-    function adjustPrizePool(uint256 newAmount) external payable onlyOwner {
-        if (newAmount <= prizePool) revert InvalidParams();
+    function increasePrizePool(uint256 additionalAmount) external payable onlyOwner {
+        if (additionalAmount == 0) revert InvalidParams();
         if (concluded) revert AlreadyConcluded();
         
         if (isERC20Prize) {
-            prizePool = newAmount;
+            if (!IERC20Minimal(prizeToken).transferFrom(msg.sender, address(this), additionalAmount)) {
+                revert TokenTransferFailed();
+            }
+            prizePool += additionalAmount;
         } else {
-            uint256 difference = newAmount - prizePool;
-            if (msg.value < difference) revert InvalidParams();
-            prizePool = newAmount;
+            if (msg.value != additionalAmount) revert InvalidParams();
+            prizePool += additionalAmount;
         }
         
-        emit PrizePoolAdjusted(newAmount);
+        emit PrizePoolAdjusted(prizePool);
     }
 
-    function getProjectPrize(uint256 projectId) external view returns (uint256) {
+    function getProjectPrize(uint256 projectId) public view returns (uint256) {
         if (projectId >= projects.length || totalTokens == 0) return 0;
         return (prizePool * projectTokens[projectId]) / totalTokens;
     }

@@ -20,6 +20,11 @@ contract HackHubFactory {
     mapping(address => address[]) private judgePast;
     mapping(address => bool) public isOngoing;
 
+    /**
+    * @dev Assumption: judge addresses are unique.
+    * The contract does NOT enforce uniqueness on-chain. The frontend/integration MUST
+    * ensure no two judges share the same address (no duplicates are submitted).
+    */
     function createHackathon(string memory name, uint256 startTime, uint256 endTime, string memory startDate, string memory endDate, 
         address[] memory judges, uint256[] memory tokenPerJudge, address prizeToken, uint256 prizeAmount, string memory imageURL ) external payable {
         Hackathon h = (new Hackathon){value: msg.value}( name, startTime, endTime, startDate, endDate, judges, tokenPerJudge, prizeToken, prizeAmount, imageURL);

@@ -25,19 +25,19 @@ contract Hackathon is Ownable {
         string docs;
     }
 
-    string public name;
-    uint256 public startTime;
-    uint256 public endTime;
-    string public startDate;
-    string public endDate;
-    string public imageURL;
-    uint256 public prizePool;
-    uint256 public totalTokens;
-    address public prizeToken;
-    address public factory;
-    bool public concluded;
-    bool public isERC20Prize;
-
+    string public name;            // name of the Hackathon
+    uint256 public startTime;      // Start time of Hackathon
+    uint256 public endTime;        // End time of Hackathon
+    string public startDate;       
+    string public endDate;         
+    string public imageURL;        // URL hash to an image or banner
+    uint256 public prizePool;      // Total prize amount (Token if ERC20; in wei if ETH)
+    uint256 public totalTokens;    // Total number of reward tokens involved
+    address public prizeToken;     // ERC20 token contract used for prizes when isERC20Prize == true (ignored if native)
+    address public factory;        // Factory instance
+    bool public concluded;         // Flag indicating the hackathon has been concluded
+    bool public isERC20Prize;      // True if prizes are paid in ERC20, false if in native currency
+    
     Project[] public projects;
     address[] public participants;
     address[] private judgeAddresses;

@@ -67,11 +67,11 @@ contract Hackathon is Ownable {
     }
     
     modifier afterConcluded() {
-        if (!concluded) revert NotAfterEndTime();
+        if (!concluded) revert BeforeEndTime();
         _;
     }
     
-    constructor(string memory _name,uint256 _startTime,uint256 _endTime,string memory _startDate, memory _endDate,
+    constructor(string memory _name,uint256 _startTime,uint256 _endTime,string memory _startDate, string memory _endDate,
         address[] memory _judges,uint256[] memory _tokens, address _prizeToken,uint256 _prizeAmount,string memory _imageURL) payable Ownable(tx.origin) {
         
         if (_startTime >= _endTime || _judges.length != _tokens.length) revert InvalidParams();

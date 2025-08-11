@@ -8,7 +8,7 @@ error InvalidParams();
 error NotJudge();
 error SubmissionClosed();
 error NoVotesCast();
-error NotAfterEndTime();
+error BeforeEndTime();
 error AlreadyClaimed();
 error InsufficientTokens();
 error AlreadyConcluded();
@@ -71,28 +71,11 @@ contract Hackathon is Ownable {
         _;
     }
     
-    constructor(
-        string memory _name,
-        uint256 _startTime,
-        uint256 _endTime,
-        string memory _startDate,
-        string memory _endDate,
-        address[] memory _judges,
-        uint256[] memory _tokens,
-        address _prizeToken,
-        uint256 _prizeAmount,
-        string memory _imageURL
-    ) payable Ownable(tx.origin) {
+    constructor(string memory _name,uint256 _startTime,uint256 _endTime,string memory _startDate, memory _endDate,
+        address[] memory _judges,uint256[] memory _tokens, address _prizeToken,uint256 _prizeAmount,string memory _imageURL) payable Ownable(tx.origin) {
+        
         if (_startTime >= _endTime || _judges.length != _tokens.length) revert InvalidParams();
-
-        name = _name;
-        startTime = _startTime;
-        endTime = _endTime;
-        startDate = _startDate;
-        endDate = _endDate;
-        imageURL = _imageURL;
-        factory = msg.sender;
-
+        name = _name;startTime = _startTime; endTime = _endTime; startDate = _startDate; endDate = _endDate; imageURL = _imageURL; factory = msg.sender;
         if (_prizeToken == address(0)) {
             if (msg.value == 0) revert InvalidParams();
             prizePool = msg.value;
@@ -116,8 +99,7 @@ contract Hackathon is Ownable {
         }
     }
 
-    function submitProject( string calldata _name, string calldata _sourceCode, string calldata _docs, address _recipient) 
-        external duringSubmission {
+    function submitProject( string calldata _name, string calldata _sourceCode, string calldata _docs, address _recipient) external duringSubmission {
         address recipient = _recipient == address(0) ? msg.sender : _recipient;
         
         if (hasSubmitted[msg.sender]) {
@@ -155,12 +137,10 @@ contract Hackathon is Ownable {
     }
 
     function claimPrize(uint256 projectId) external afterConcluded {
-        if (projectId >= projects.length || projects[projectId].submitter != msg.sender || 
-            prizeClaimed[projectId]) revert InvalidParams();
+        if (projectId >= projects.length || projects[projectId].submitter != msg.sender || prizeClaimed[projectId]) revert InvalidParams();
 
         uint256 share = getProjectPrize(projectId);
         if (share == 0) revert InvalidParams();
-
         prizeClaimed[projectId] = true;
         address recipient = projects[projectId].recipient;
         
@@ -175,15 +155,12 @@ contract Hackathon is Ownable {
 
     function adjustJudgeTokens(address judge, uint256 amount) external onlyOwner duringSubmission {
         uint256 oldAmount = judgeTokens[judge];
-        
-        // Add new judge if not present and amount > 0
-        if (!isJudge[judge] && amount > 0) {
+        if (!isJudge[judge] && amount > 0) {                      // Add new judge if not present and amount > 0
             isJudge[judge] = true;
             judgeAddresses.push(judge);
             IHackHubFactory(factory).registerJudge(judge);
         }
-        // Remove judge if amount is 0
-        else if (isJudge[judge] && amount == 0) {
+        else if (isJudge[judge] && amount == 0) {                // Remove judge if amount is 0
             isJudge[judge] = false;
             // Remove from judgeAddresses array
             uint256 length = judgeAddresses.length;
@@ -196,11 +173,8 @@ contract Hackathon is Ownable {
             }
         }
         
-        // Update mappings
         judgeTokens[judge] = amount;
         remainingJudgeTokens[judge] = amount;
-        
-        // Update total tokens
         if (amount > oldAmount) totalTokens += (amount - oldAmount);
         else if (oldAmount > amount) totalTokens -= (oldAmount - amount);
     }
@@ -218,7 +192,6 @@ contract Hackathon is Ownable {
             if (msg.value != additionalAmount) revert InvalidParams();
             prizePool += additionalAmount;
         }
-        
         emit PrizePoolAdjusted(prizePool);
     }
 
@@ -241,12 +214,7 @@ contract Hackathon is Ownable {
         return result;
     }
     
-    function getAllJudges() external view returns (address[] memory) {
-        return judgeAddresses;
-    }
-    
-
-
+    function getAllJudges() external view returns (address[] memory) { return judgeAddresses; }
     function participantCount() external view returns (uint256) { return participants.length; }
     function getParticipants() external view returns (address[] memory) { return participants; }
 }

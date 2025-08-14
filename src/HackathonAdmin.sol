@@ -12,13 +12,13 @@ library HackathonAdmin {
     event JudgeRegistered(address indexed hackathon, address indexed judge);
     event HackathonConcluded(address indexed hackathon);
 
-    function registerParticipant( mapping(address => bool) storage isOngoing, mapping(address => address[]) storage participantOngoing, address participant) external {
+    function registerParticipant( mapping(address => bool) storage isOngoing, mapping(address => address[]) storage participantOngoing, address participant) internal {
         if (!isOngoing[msg.sender]) revert OnlyOngoingHackathons();
         participantOngoing[participant].push(msg.sender);
         emit ParticipantRegistered(msg.sender, participant);
     }
 
-    function registerJudge( mapping(address => bool) storage isOngoing, mapping(address => address[]) storage judgeOngoing, address judge) external {
+    function registerJudge( mapping(address => bool) storage isOngoing, mapping(address => address[]) storage judgeOngoing, address judge) internal {
         if (!isOngoing[msg.sender]) revert OnlyOngoingHackathons();
         judgeOngoing[judge].push(msg.sender);
         emit JudgeRegistered(msg.sender, judge);
@@ -30,7 +30,7 @@ library HackathonAdmin {
         mapping(address => address[]) storage judgeOngoing,
         mapping(address => address[]) storage judgePast,
         address user
-    ) external view returns (
+    ) internal view returns (
         uint256 participantOngoingCount,
         uint256 participantPastCount,
         uint256 judgeOngoingCount,
@@ -53,7 +53,7 @@ library HackathonAdmin {
         mapping(address => address[]) storage judgeOngoing,
         mapping(address => address[]) storage judgePast,
         address hackathon
-    ) external {
+    ) internal {
         if (msg.sender != hackathon || !isOngoing[hackathon]) revert OnlyHackathonContract();
 
         HackHubUtils.removeFromArray(ongoingHackathons, hackathon);               // Move hackathon to past

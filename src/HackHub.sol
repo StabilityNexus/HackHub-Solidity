@@ -2,7 +2,9 @@
 pragma solidity ^0.8.20;
 
 import {Ownable, IERC20Minimal, IHackHubFactory} from "./Interfaces.sol";
-import {HackHubUtils} from "./HackHubUtils.sol";
+import {SponsorshipLib} from "./SponsorshipLib.sol";
+
+using SponsorshipLib for SponsorshipLib.SponsorshipStorage;
 
 error InvalidParams();
 error NotJudge();
@@ -31,12 +33,9 @@ contract Hackathon is Ownable {
     string public startDate;       
     string public endDate;         
     string public imageURL;        // URL hash to an image or banner
-    uint256 public prizePool;      // Total prize amount (Token if ERC20; in wei if ETH)
     uint256 public totalTokens;    // Total number of reward tokens involved
-    address public prizeToken;     // ERC20 token contract used for prizes when isERC20Prize == true (ignored if native)
     address public factory;        // Factory instance
     bool public concluded;         // Flag indicating the hackathon has been concluded
-    bool public isERC20Prize;      // True if prizes are paid in ERC20, false if in native currency
     
     Project[] public projects;
     address[] public participants;
@@ -51,10 +50,15 @@ contract Hackathon is Ownable {
     mapping(address => uint256) public participantProjectId;
     mapping(address => bool) public hasSubmitted;
 
+    // Prize pool now managed through SponsorshipLib
+    
+    // Sponsorship storage
+    SponsorshipLib.SponsorshipStorage private sponsorshipStorage;
+
     event ProjectSubmitted(uint256 indexed id, address indexed submitter);
     event Voted(address indexed judge, uint256 indexed projectId, uint256 amount);
     event PrizeClaimed(uint256 indexed projectId, uint256 amount);
-    event PrizePoolAdjusted(uint256 newAmount);
+
 
     modifier duringSubmission() {
         if (block.timestamp < startTime || block.timestamp > endTime) revert SubmissionClosed();
@@ -72,20 +76,13 @@ contract Hackathon is Ownable {
     }
     
     constructor(string memory _name,uint256 _startTime,uint256 _endTime,string memory _startDate, string memory _endDate,
-        address[] memory _judges,uint256[] memory _tokens, address _prizeToken,uint256 _prizeAmount,string memory _imageURL) payable Ownable(tx.origin) {
+        address[] memory _judges,uint256[] memory _tokens,string memory _imageURL) payable Ownable(tx.origin) {
         
         if (_startTime >= _endTime || _judges.length != _tokens.length) revert InvalidParams();
         name = _name;startTime = _startTime; endTime = _endTime; startDate = _startDate; endDate = _endDate; imageURL = _imageURL; factory = msg.sender;
-        if (_prizeToken == address(0)) {
-            if (msg.value == 0) revert InvalidParams();
-            prizePool = msg.value;
-        } else {
-            if (_prizeAmount == 0) revert InvalidParams();
-            prizePool = _prizeAmount;
-            prizeToken = _prizeToken;
-            isERC20Prize = true;
-        }
-
+        
+        sponsorshipStorage.approveToken(address(0), 1);
+        
         uint256 judgesLength = _judges.length;
         for (uint256 i; i < judgesLength;) {
             address j = _judges[i];
@@ -101,20 +98,13 @@ contract Hackathon is Ownable {
 
     function submitProject( string calldata _name, string calldata _sourceCode, string calldata _docs, address _recipient) external duringSubmission {
         address recipient = _recipient == address(0) ? msg.sender : _recipient;
-        
-        if (hasSubmitted[msg.sender]) {
-            uint256 projectId = participantProjectId[msg.sender];
-            projects[projectId] = Project(msg.sender, recipient, _name, _sourceCode, _docs);
-            emit ProjectSubmitted(projectId, msg.sender);
-        } else {
-            uint256 id = projects.length;
-            projects.push(Project(msg.sender, recipient, _name, _sourceCode, _docs));
-            hasSubmitted[msg.sender] = true;
-            participantProjectId[msg.sender] = id;
-            participants.push(msg.sender);
-            IHackHubFactory(factory).registerParticipant(msg.sender);
-            emit ProjectSubmitted(id, msg.sender);
-        }
+        uint256 id = projects.length;
+        projects.push(Project(msg.sender, recipient, _name, _sourceCode, _docs));
+        hasSubmitted[msg.sender] = true;
+        participantProjectId[msg.sender] = id;
+        participants.push(msg.sender);
+        IHackHubFactory(factory).registerParticipant(msg.sender);
+        emit ProjectSubmitted(id, msg.sender);
     }
 
     function vote(uint256 projectId, uint256 amount) external duringEvaluation {
@@ -139,39 +129,18 @@ contract Hackathon is Ownable {
     function claimPrize(uint256 projectId) external afterConcluded {
         if (projectId >= projects.length || projects[projectId].submitter != msg.sender || prizeClaimed[projectId]) revert InvalidParams();
 
-        uint256 share = getProjectPrize(projectId);
-        if (share == 0) revert InvalidParams();
         prizeClaimed[projectId] = true;
         address recipient = projects[projectId].recipient;
+        uint256 projectShare = projectTokens[projectId];
+
+        // All prize transfers now handled through SponsorshipLib
+        sponsorshipStorage.distributePrizes(recipient, projectShare, totalTokens);
         
-        if (isERC20Prize) {
-            if (!IERC20Minimal(prizeToken).transfer(recipient, share)) revert TokenTransferFailed();
-        } else {
-            (bool success,) = payable(recipient).call{value: share}("");
-            if (!success) revert TokenTransferFailed();
-        }
-        emit PrizeClaimed(projectId, share);
+        emit PrizeClaimed(projectId, 0);
     }
 
     function adjustJudgeTokens(address judge, uint256 amount) external onlyOwner duringSubmission {
         uint256 oldAmount = judgeTokens[judge];
-        if (!isJudge[judge] && amount > 0) {                      // Add new judge if not present and amount > 0
-            isJudge[judge] = true;
-            judgeAddresses.push(judge);
-            IHackHubFactory(factory).registerJudge(judge);
-        }
-        else if (isJudge[judge] && amount == 0) {                // Remove judge if amount is 0
-            isJudge[judge] = false;
-            // Remove from judgeAddresses array
-            uint256 length = judgeAddresses.length;
-            for (uint256 i = 0; i < length; i++) {
-                if (judgeAddresses[i] == judge) {
-                    judgeAddresses[i] = judgeAddresses[length - 1];
-                    judgeAddresses.pop();
-                    break;
-                }
-            }
-        }
         
         judgeTokens[judge] = amount;
         remainingJudgeTokens[judge] = amount;
@@ -180,41 +149,61 @@ contract Hackathon is Ownable {
     }
 
     function increasePrizePool(uint256 additionalAmount) external payable onlyOwner {
-        if (additionalAmount == 0) revert InvalidParams();
         if (concluded) revert AlreadyConcluded();
-        
-        if (isERC20Prize) {
-            if (!IERC20Minimal(prizeToken).transferFrom(msg.sender, address(this), additionalAmount)) {
-                revert TokenTransferFailed();
-            }
-            prizePool += additionalAmount;
-        } else {
-            if (msg.value != additionalAmount) revert InvalidParams();
-            prizePool += additionalAmount;
-        }
-        emit PrizePoolAdjusted(prizePool);
+        sponsorshipStorage.addOrganizerFunds(address(0), additionalAmount);
     }
 
-    function getProjectPrize(uint256 projectId) public view returns (uint256) {
-        if (projectId >= projects.length || totalTokens == 0) return 0;
-        return (prizePool * projectTokens[projectId]) / totalTokens;
+    function submitToken(address token, string calldata tokenName) external {
+        sponsorshipStorage.submitToken(token, tokenName);
     }
+
+    function approveToken(address token, uint256 minAmount) external onlyOwner {
+        sponsorshipStorage.approveToken(token, minAmount);
+    }
+
+    function depositToToken(address token, uint256 amount, string calldata sponsorName, string calldata sponsorImageURL) external payable {
+        if (concluded) revert AlreadyConcluded();
+        sponsorshipStorage.depositToToken(token, amount, sponsorName, sponsorImageURL);
+    }
+
 
     function projectCount() external view returns (uint256) { return projects.length; }
     function judgeCount() external view returns (uint256) { return judgeAddresses.length; }
     
-    function getJudges(uint256 start, uint256 end) external view returns (address[] memory) {
-        if (start > end || end >= judgeAddresses.length) revert InvalidParams();
-        uint256 length = end - start + 1;
-        address[] memory result = new address[](length);
-        for (uint256 i; i < length;) {
-            result[i] = judgeAddresses[start + i];
-            unchecked { ++i; }
-        }
-        return result;
+    // Reduced getters to shrink bytecode for Remix deployment
+    function getAllJudges() external view returns (address[] memory) { return judgeAddresses; }
+    function getParticipants() external view returns (address[] memory) { return participants; }
+    
+    // Simple sponsorship getter functions
+    function getTokenTotal(address token) external view returns (uint256) { 
+        return sponsorshipStorage.getTokenTotal(token); 
     }
     
-    function getAllJudges() external view returns (address[] memory) { return judgeAddresses; }
-    function participantCount() external view returns (uint256) { return participants.length; }
-    function getParticipants() external view returns (address[] memory) { return participants; }
+    function getSponsorTokenAmount(address sponsor, address token) external view returns (uint256) { 
+        return sponsorshipStorage.getSponsorTokenAmount(sponsor, token); 
+    }
+    
+    function getTokenMinAmount(address token) external view returns (uint256) { 
+        return sponsorshipStorage.getTokenMinAmount(token); 
+    }
+    
+    function getApprovedTokensList() external view returns (address[] memory) { 
+        return sponsorshipStorage.getApprovedTokensList(); 
+    }
+
+    function getSponsorProfile(address sponsor) external view returns (string memory sponsorName, string memory sponsorImageURL) {
+        return sponsorshipStorage.getSponsorProfile(sponsor);
+    }
+
+    function getSubmittedTokensList() external view returns (address[] memory) {
+        return sponsorshipStorage.getSubmittedTokensList();
+    }
+
+    function getTokenSubmission(address token) external view returns (string memory tokenName, address submitter, bool exists) {
+        return sponsorshipStorage.getTokenSubmission(token);
+    }
+
+    function getAllSponsors() external view returns (address[] memory) {
+        return sponsorshipStorage.getAllSponsors();
+    }
 }

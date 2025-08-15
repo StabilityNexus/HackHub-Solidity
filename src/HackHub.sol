@@ -49,16 +49,12 @@ contract Hackathon is Ownable {
     mapping(address => mapping(uint256 => uint256)) public judgeVotes;
     mapping(address => uint256) public participantProjectId;
     mapping(address => bool) public hasSubmitted;
-
-    // Prize pool now managed through SponsorshipLib
     
-    // Sponsorship storage
-    SponsorshipLib.SponsorshipStorage private sponsorshipStorage;
+    SponsorshipLib.SponsorshipStorage private sponsorshipStorage;         // Prize pool managed through SponsorshipLib
 
     event ProjectSubmitted(uint256 indexed id, address indexed submitter);
     event Voted(address indexed judge, uint256 indexed projectId, uint256 amount);
     event PrizeClaimed(uint256 indexed projectId, uint256 amount);
-
 
     modifier duringSubmission() {
         if (block.timestamp < startTime || block.timestamp > endTime) revert SubmissionClosed();
@@ -133,9 +129,7 @@ contract Hackathon is Ownable {
         address recipient = projects[projectId].recipient;
         uint256 projectShare = projectTokens[projectId];
 
-        // All prize transfers now handled through SponsorshipLib
-        sponsorshipStorage.distributePrizes(recipient, projectShare, totalTokens);
-        
+        sponsorshipStorage.distributePrizes(recipient, projectShare, totalTokens);        
         emit PrizeClaimed(projectId, 0);
     }
 
@@ -148,62 +142,28 @@ contract Hackathon is Ownable {
         else if (oldAmount > amount) totalTokens -= (oldAmount - amount);
     }
 
-    function increasePrizePool(uint256 additionalAmount) external payable onlyOwner {
-        if (concluded) revert AlreadyConcluded();
-        sponsorshipStorage.addOrganizerFunds(address(0), additionalAmount);
-    }
-
-    function submitToken(address token, string calldata tokenName) external {
-        sponsorshipStorage.submitToken(token, tokenName);
-    }
-
-    function approveToken(address token, uint256 minAmount) external onlyOwner {
-        sponsorshipStorage.approveToken(token, minAmount);
-    }
+    function submitToken(address token, string calldata tokenName) external { sponsorshipStorage.submitToken(token, tokenName); }
+    function approveToken(address token, uint256 minAmount) external onlyOwner { sponsorshipStorage.approveToken(token, minAmount); }
 
     function depositToToken(address token, uint256 amount, string calldata sponsorName, string calldata sponsorImageURL) external payable {
         if (concluded) revert AlreadyConcluded();
         sponsorshipStorage.depositToToken(token, amount, sponsorName, sponsorImageURL);
     }
 
-
     function projectCount() external view returns (uint256) { return projects.length; }
     function judgeCount() external view returns (uint256) { return judgeAddresses.length; }
     
-    // Reduced getters to shrink bytecode for Remix deployment
     function getAllJudges() external view returns (address[] memory) { return judgeAddresses; }
     function getParticipants() external view returns (address[] memory) { return participants; }
     
-    // Simple sponsorship getter functions
-    function getTokenTotal(address token) external view returns (uint256) { 
-        return sponsorshipStorage.getTokenTotal(token); 
-    }
-    
-    function getSponsorTokenAmount(address sponsor, address token) external view returns (uint256) { 
-        return sponsorshipStorage.getSponsorTokenAmount(sponsor, token); 
-    }
-    
-    function getTokenMinAmount(address token) external view returns (uint256) { 
-        return sponsorshipStorage.getTokenMinAmount(token); 
-    }
-    
-    function getApprovedTokensList() external view returns (address[] memory) { 
-        return sponsorshipStorage.getApprovedTokensList(); 
-    }
+    function getTokenTotal(address token) external view returns (uint256) { return sponsorshipStorage.getTokenTotal(token); }
+    function getTokenMinAmount(address token) external view returns (uint256) { return sponsorshipStorage.getTokenMinAmount(token);  }
+    function getApprovedTokensList() external view returns (address[] memory) { return sponsorshipStorage.getApprovedTokensList(); }
 
-    function getSponsorProfile(address sponsor) external view returns (string memory sponsorName, string memory sponsorImageURL) {
-        return sponsorshipStorage.getSponsorProfile(sponsor);
-    }
+    function getSponsorProfile(address sponsor) external view returns (string memory sponsorName, string memory sponsorImageURL) {return sponsorshipStorage.getSponsorProfile(sponsor); }
+    function getSponsorTokenAmount(address sponsor, address token) external view returns (uint256) { return sponsorshipStorage.getSponsorTokenAmount(sponsor, token); }
+    function getAllSponsors() external view returns (address[] memory) { return sponsorshipStorage.getAllSponsors(); }
 
-    function getSubmittedTokensList() external view returns (address[] memory) {
-        return sponsorshipStorage.getSubmittedTokensList();
-    }
-
-    function getTokenSubmission(address token) external view returns (string memory tokenName, address submitter, bool exists) {
-        return sponsorshipStorage.getTokenSubmission(token);
-    }
-
-    function getAllSponsors() external view returns (address[] memory) {
-        return sponsorshipStorage.getAllSponsors();
-    }
+    function getSubmittedTokensList() external view returns (address[] memory) { return sponsorshipStorage.getSubmittedTokensList(); }
+    function getTokenSubmission(address token) external view returns (string memory tokenName, address submitter, bool exists) { return sponsorshipStorage.getTokenSubmission(token);}
 }

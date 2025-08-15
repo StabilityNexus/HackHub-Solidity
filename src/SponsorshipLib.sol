@@ -16,78 +16,46 @@ library SponsorshipLib {
         bool exists;
     }
 
-    // Storage struct to hold all sponsorship data
     struct SponsorshipStorage {
         mapping(address => mapping(address => uint256)) sponsorTokenAmounts; // sponsor => token => amount
-        mapping(address => uint256) approvedTokensAmount;                   // token => total approved amount
-        mapping(address => uint256) tokenMinAmount;                         // token => minimum amount per deposit
-        mapping(address => SponsorProfile) sponsorProfiles;                 // sponsor => profile
-        mapping(address => TokenSubmission) tokenSubmissions;              // token => submission details
-        address[] approvedTokenList;                                        // tokens with non-zero approved amount
-        address[] submittedTokenList;                                       // all submitted tokens
-        address[] sponsors;                                                 // all unique sponsors
+        mapping(address => uint256) approvedTokensAmount;                    // token => total approved amount
+        mapping(address => uint256) tokenMinAmount;                          // token => minimum amount per deposit
+        mapping(address => SponsorProfile) sponsorProfiles;                  // sponsor => profile
+        mapping(address => TokenSubmission) tokenSubmissions;                // token => submission details
+        address[] approvedTokenList;                                         // tokens with non-zero approved amount
+        address[] submittedTokenList;                                        // all submitted tokens
+        address[] sponsors;                                                  // all unique sponsors
     }
 
-    // Events
     event TokenSubmitted(address indexed token, string name, address indexed submitter);
     event TokenApproved(address indexed token, uint256 minAmount);
     event SponsorDeposited(address indexed sponsor, address indexed token, uint256 amount);
 
-    // Errors
     error TokenTransferFailed();
     error InvalidParams();
     error TokenNotApproved();
     error TokenAlreadySubmitted();
 
-    /**
-     * @dev Anyone can submit a token for consideration
-     */
-    function submitToken(
-        SponsorshipStorage storage self,
-        address token,
-        string calldata tokenName
-    ) external {
+    
+    function submitToken(SponsorshipStorage storage self, address token, string calldata tokenName) external {      // Anyone can submit a token for consideration
         if (token == address(0) && bytes(tokenName).length == 0) revert InvalidParams();
         if (self.tokenSubmissions[token].exists) revert TokenAlreadySubmitted();
         
-        self.tokenSubmissions[token] = TokenSubmission({
-            name: tokenName,
-            submitter: msg.sender,
-            exists: true
-        });
+        self.tokenSubmissions[token] = TokenSubmission({name: tokenName, submitter: msg.sender, exists: true});
         self.submittedTokenList.push(token);
-        
         emit TokenSubmitted(token, tokenName, msg.sender);
     }
 
-    /**
-     * @dev Owner approves a submitted token with minimum amount
-     */
-    function approveToken(
-        SponsorshipStorage storage self,
-        address token,
-        uint256 minAmount
-    ) external {
+    // Owner approves a submitted token with minimum amount
+    function approveToken(SponsorshipStorage storage self, address token, uint256 minAmount) external {
         if (!self.tokenSubmissions[token].exists) revert InvalidParams();
         
         self.tokenMinAmount[token] = minAmount;
-        if (self.approvedTokensAmount[token] == 0) {
-            self.approvedTokenList.push(token);
-        }
-        
+        if (self.approvedTokensAmount[token] == 0)  self.approvedTokenList.push(token);
         emit TokenApproved(token, minAmount);
     }
 
-    /**
-     * @dev Sponsors deposit to approved tokens
-     */
-    function depositToToken(
-        SponsorshipStorage storage self,
-        address token,
-        uint256 amount,
-        string calldata sponsorName,
-        string calldata sponsorImageURL
-    ) external {
+    function depositToToken( SponsorshipStorage storage self, address token, uint256 amount, string calldata sponsorName, string calldata sponsorImageURL) external { // Sponsors deposit to approved tokens
         if (self.tokenMinAmount[token] == 0) revert TokenNotApproved();
         if (amount == 0) revert InvalidParams();
         if (bytes(sponsorName).length == 0 || bytes(sponsorImageURL).length == 0) revert InvalidParams();
@@ -98,17 +66,12 @@ library SponsorshipLib {
             self.sponsorProfiles[msg.sender] = SponsorProfile({ name: sponsorName, image: sponsorImageURL });
             self.sponsorTokenAmounts[msg.sender][token] += amount;
             self.approvedTokensAmount[token] += amount;
-            
             emit SponsorDeposited(msg.sender, token, amount);
         } 
     }
 
-    /**
-     * @dev Handle token transfers (native or ERC20)
-     */
     function _handleTokenTransfer(address token, uint256 amount, bool isDeposit, address recipient) internal {
-        if (token == address(0)) {
-            // Native currency
+        if (token == address(0)) {                        // Native currency
             if (isDeposit) {
                 if (msg.value != amount) revert InvalidParams();
             } else {
@@ -116,8 +79,7 @@ library SponsorshipLib {
                 (bool success,) = payable(target).call{value: amount}("");
                 if (!success) revert TokenTransferFailed();
             }
-        } else {
-            // ERC20 token
+        } else {                                        // ERC20 token
             if (isDeposit) {
                 if (msg.value != 0) revert InvalidParams();
                 if (!IERC20Minimal(token).transferFrom(msg.sender, address(this), amount)) {
@@ -132,29 +94,15 @@ library SponsorshipLib {
         }
     }
 
-    function getTokenTotal(SponsorshipStorage storage self, address token) external view returns (uint256) {
-        return self.approvedTokensAmount[token];
-    }
+    function getTokenTotal(SponsorshipStorage storage self, address token) external view returns (uint256) { return self.approvedTokensAmount[token]; }
+    function getSponsorTokenAmount(SponsorshipStorage storage self, address sponsor, address token) external view returns (uint256) { return self.sponsorTokenAmounts[sponsor][token]; }
+    function getTokenMinAmount(SponsorshipStorage storage self, address token) external view returns (uint256) { return self.tokenMinAmount[token]; }
     
-    function getSponsorTokenAmount(SponsorshipStorage storage self, address sponsor, address token) external view returns (uint256) {
-        return self.sponsorTokenAmounts[sponsor][token];
-    }
-    
-    function getTokenMinAmount(SponsorshipStorage storage self, address token) external view returns (uint256) {
-        return self.tokenMinAmount[token];
-    }
-    
-    function getApprovedTokensList(SponsorshipStorage storage self) external view returns (address[] memory) {
-        return self.approvedTokenList;
-    }
+    function getAllSponsors(SponsorshipStorage storage self) external view returns (address[] memory) { return self.sponsors; }
+    function getApprovedTokensList(SponsorshipStorage storage self) external view returns (address[] memory) { return self.approvedTokenList; }
+    function isTokenApproved(SponsorshipStorage storage self, address token) external view returns (bool) { return self.tokenMinAmount[token] > 0; }
 
-    function getSubmittedTokensList(SponsorshipStorage storage self) external view returns (address[] memory) {
-        return self.submittedTokenList;
-    }
-
-    function getAllSponsors(SponsorshipStorage storage self) external view returns (address[] memory) {
-        return self.sponsors;
-    }
+    function getSubmittedTokensList(SponsorshipStorage storage self) external view returns (address[] memory) { return self.submittedTokenList; }
 
     function getTokenSubmission(SponsorshipStorage storage self, address token) external view returns (string memory name, address submitter, bool exists) {
         TokenSubmission storage submission = self.tokenSubmissions[token];
@@ -164,10 +112,6 @@ library SponsorshipLib {
     function getSponsorProfile(SponsorshipStorage storage self, address sponsor) external view returns (string memory sponsorName, string memory imageURL) {
         SponsorProfile storage p = self.sponsorProfiles[sponsor];
         return (p.name, p.image);
-    }
-
-    function isTokenApproved(SponsorshipStorage storage self, address token) external view returns (bool) {
-        return self.tokenMinAmount[token] > 0;
     }
 
     function distributePrizes(SponsorshipStorage storage self, address recipient, uint256 projectShare, uint256 totalTokens) external {

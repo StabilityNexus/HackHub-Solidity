@@ -24,24 +24,11 @@ library HackathonAdmin {
         emit JudgeRegistered(msg.sender, judge);
     }
 
-    function getUserCounts(
-        mapping(address => address[]) storage participantOngoing,
-        mapping(address => address[]) storage participantPast,
-        mapping(address => address[]) storage judgeOngoing,
-        mapping(address => address[]) storage judgePast,
-        address user
-    ) internal view returns (
-        uint256 participantOngoingCount,
-        uint256 participantPastCount,
-        uint256 judgeOngoingCount,
-        uint256 judgePastCount
-    ) {
-        return (
-            participantOngoing[user].length,
-            participantPast[user].length,
-            judgeOngoing[user].length,
-            judgePast[user].length
-        );
+    function getUserCounts( mapping(address => address[]) storage participantOngoing, mapping(address => address[]) storage participantPast, 
+        mapping(address => address[]) storage judgeOngoing, mapping(address => address[]) storage judgePast, address user
+    ) internal view returns (uint256 participantOngoingCount,uint256 participantPastCount,uint256 judgeOngoingCount,uint256 judgePastCount ) {
+        
+        return ( participantOngoing[user].length,participantPast[user].length, judgeOngoing[user].length, judgePast[user].length );
     }
 
     function concludeHackathon(
@@ -56,7 +43,7 @@ library HackathonAdmin {
     ) internal {
         if (msg.sender != hackathon || !isOngoing[hackathon]) revert OnlyHackathonContract();
 
-        HackHubUtils.removeFromArray(ongoingHackathons, hackathon);               // Move hackathon to past
+        HackHubUtils.removeFromArray(ongoingHackathons, hackathon);               // Move hackathon, judge and participant to past
         pastHackathons.push(hackathon);
         isOngoing[hackathon] = false;
         Hackathon h = Hackathon(hackathon);

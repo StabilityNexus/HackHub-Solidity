@@ -77,6 +77,8 @@ contract Hackathon is Ownable {
         if (_startTime >= _endTime || _judges.length != _tokens.length) revert InvalidParams();
         name = _name;startTime = _startTime; endTime = _endTime; startDate = _startDate; endDate = _endDate; imageURL = _imageURL; factory = msg.sender;
         
+        // Ensure native token is submitted before approval to avoid revert in SponsorshipLib.approveToken
+        sponsorshipStorage.submitToken(address(0), "Native");
         sponsorshipStorage.approveToken(address(0), 1);
         
         uint256 judgesLength = _judges.length;

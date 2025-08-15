@@ -25,6 +25,7 @@ library SponsorshipLib {
         address[] approvedTokenList;                                         // tokens with non-zero approved amount
         address[] submittedTokenList;                                        // all submitted tokens
         address[] sponsors;                                                  // all unique sponsors
+        mapping(address => bool) isSponsor;                                  // tracks if address is already a sponsor
     }
 
     event TokenSubmitted(address indexed token, string name, address indexed submitter);
@@ -45,9 +46,8 @@ library SponsorshipLib {
         self.submittedTokenList.push(token);
         emit TokenSubmitted(token, tokenName, msg.sender);
     }
-
-    // Owner approves a submitted token with minimum amount
-    function approveToken(SponsorshipStorage storage self, address token, uint256 minAmount) external {
+    
+    function approveToken(SponsorshipStorage storage self, address token, uint256 minAmount) external {          // Owner approves a submitted token with minimum amount
         if (!self.tokenSubmissions[token].exists) revert InvalidParams();
         
         self.tokenMinAmount[token] = minAmount;
@@ -66,6 +66,11 @@ library SponsorshipLib {
             self.sponsorProfiles[msg.sender] = SponsorProfile({ name: sponsorName, image: sponsorImageURL });
             self.sponsorTokenAmounts[msg.sender][token] += amount;
             self.approvedTokensAmount[token] += amount;
+            
+            if (!self.isSponsor[msg.sender]) {
+                self.isSponsor[msg.sender] = true;
+                self.sponsors.push(msg.sender);
+            }
             emit SponsorDeposited(msg.sender, token, amount);
         } 
     }

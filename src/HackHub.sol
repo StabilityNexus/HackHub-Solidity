@@ -52,9 +52,9 @@ contract Hackathon is Ownable {
     
     SponsorshipLib.SponsorshipStorage private sponsorshipStorage;         // Prize pool managed through SponsorshipLib
 
-    event ProjectSubmitted(uint256 indexed id, address indexed submitter);
-    event Voted(address indexed judge, uint256 indexed projectId, uint256 amount);
-    event PrizeClaimed(uint256 indexed projectId, uint256 amount);
+    // event ProjectSubmitted(uint256 indexed id, address indexed submitter);
+    // event Voted(address indexed judge, uint256 indexed projectId, uint256 amount);
+    // event PrizeClaimed(uint256 indexed projectId, uint256 amount);
 
     modifier duringSubmission() {
         if (block.timestamp < startTime || block.timestamp > endTime) revert SubmissionClosed();
@@ -82,6 +82,7 @@ contract Hackathon is Ownable {
         uint256 judgesLength = _judges.length;
         for (uint256 i; i < judgesLength;) {
             address j = _judges[i];
+            if (isJudge[j]) revert InvalidParams();
             uint256 t = _tokens[i];
             isJudge[j] = true;
             totalTokens += t;
@@ -93,14 +94,16 @@ contract Hackathon is Ownable {
     }
 
     function submitProject( string calldata _name, string calldata _sourceCode, string calldata _docs, address _recipient) external duringSubmission {
+        if(hasSubmitted[msg.sender]) revert AlreadySubmitted();
         address recipient = _recipient == address(0) ? msg.sender : _recipient;
+
         uint256 id = projects.length;
         projects.push(Project(msg.sender, recipient, _name, _sourceCode, _docs));
         hasSubmitted[msg.sender] = true;
         participantProjectId[msg.sender] = id;
         participants.push(msg.sender);
         IHackHubFactory(factory).registerParticipant(msg.sender);
-        emit ProjectSubmitted(id, msg.sender);
+        // emit ProjectSubmitted(id, msg.sender);
     }
 
     function vote(uint256 projectId, uint256 amount) external duringEvaluation {
@@ -113,7 +116,7 @@ contract Hackathon is Ownable {
         remainingJudgeTokens[msg.sender] = available - amount;
         projectTokens[projectId] = projectTokens[projectId] - currentVote + amount;
         judgeVotes[msg.sender][projectId] = amount;
-        emit Voted(msg.sender, projectId, amount);
+        // emit Voted(msg.sender, projectId, amount);
     }
 
     function concludeHackathon() external duringEvaluation onlyOwner {
@@ -130,7 +133,7 @@ contract Hackathon is Ownable {
         uint256 projectShare = projectTokens[projectId];
 
         sponsorshipStorage.distributePrizes(recipient, projectShare, totalTokens);        
-        emit PrizeClaimed(projectId, 0);
+        // emit PrizeClaimed(projectId, projectShare);
     }
 
     function adjustJudgeTokens(address judge, uint256 amount) external onlyOwner duringSubmission {

@@ -3,59 +3,34 @@ pragma solidity ^0.8.20;
 
 import {Hackathon} from "./HackHub.sol";
 import {HackHubUtils} from "./HackHubUtils.sol";
-// Judge struct & utility functions are in HackHubUtils
 
 library HackathonAdmin {
-    // Errors
     error OnlyOngoingHackathons();
     error OnlyHackathonContract();
 
-    // Events
     event ParticipantRegistered(address indexed hackathon, address indexed participant);
     event JudgeRegistered(address indexed hackathon, address indexed judge);
     event HackathonConcluded(address indexed hackathon);
 
-    function registerParticipant(
-        mapping(address => bool) storage isOngoing,
-        mapping(address => address[]) storage participantOngoing,
-        address participant
-    ) external {
+    function registerParticipant( mapping(address => bool) storage isOngoing, mapping(address => address[]) storage participantOngoing, address participant) internal {
         if (!isOngoing[msg.sender]) revert OnlyOngoingHackathons();
         participantOngoing[participant].push(msg.sender);
         emit ParticipantRegistered(msg.sender, participant);
     }
 
-    function registerJudge(
-        mapping(address => bool) storage isOngoing,
-        mapping(address => address[]) storage judgeOngoing,
-        address judge
-    ) external {
+    function registerJudge( mapping(address => bool) storage isOngoing, mapping(address => address[]) storage judgeOngoing, address judge) internal {
         if (!isOngoing[msg.sender]) revert OnlyOngoingHackathons();
         judgeOngoing[judge].push(msg.sender);
         emit JudgeRegistered(msg.sender, judge);
     }
 
-    function getUserCounts(
-        mapping(address => address[]) storage participantOngoing,
-        mapping(address => address[]) storage participantPast,
-        mapping(address => address[]) storage judgeOngoing,
-        mapping(address => address[]) storage judgePast,
-        address user
-    ) external view returns (
-        uint256 participantOngoingCount,
-        uint256 participantPastCount,
-        uint256 judgeOngoingCount,
-        uint256 judgePastCount
-    ) {
-        return (
-            participantOngoing[user].length,
-            participantPast[user].length,
-            judgeOngoing[user].length,
-            judgePast[user].length
-        );
+    function getUserCounts( mapping(address => address[]) storage participantOngoing, mapping(address => address[]) storage participantPast, 
+        mapping(address => address[]) storage judgeOngoing, mapping(address => address[]) storage judgePast, address user
+    ) internal view returns (uint256 participantOngoingCount,uint256 participantPastCount,uint256 judgeOngoingCount,uint256 judgePastCount ) {
+        
+        return ( participantOngoing[user].length,participantPast[user].length, judgeOngoing[user].length, judgePast[user].length );
     }
 
-    // ---------------- Conclusion -----------------
     function concludeHackathon(
         address[] storage ongoingHackathons,
         address[] storage pastHackathons,
@@ -65,14 +40,12 @@ library HackathonAdmin {
         mapping(address => address[]) storage judgeOngoing,
         mapping(address => address[]) storage judgePast,
         address hackathon
-    ) external {
+    ) internal {
         if (msg.sender != hackathon || !isOngoing[hackathon]) revert OnlyHackathonContract();
 
-        // Move hackathon to past
-        HackHubUtils.removeFromArray(ongoingHackathons, hackathon);
+        HackHubUtils.removeFromArray(ongoingHackathons, hackathon);               // Move hackathon, judge and participant to past
         pastHackathons.push(hackathon);
         isOngoing[hackathon] = false;
-
         Hackathon h = Hackathon(hackathon);
 
         address[] memory judges = h.getAllJudges();

@@ -18,7 +18,7 @@ library SponsorshipLib {
 
     struct SponsorshipStorage {
         mapping(address => mapping(address => uint256)) sponsorTokenAmounts; // sponsor => token => amount
-        mapping(address => uint256) approvedTokensAmount;                    // token => total approved amount
+        mapping(address => uint256) tokenAmounts;                    // token => total approved amount
         mapping(address => uint256) tokenMinAmount;                          // token => minimum amount per deposit
         mapping(address => SponsorProfile) sponsorProfiles;                  // sponsor => profile
         mapping(address => TokenSubmission) tokenSubmissions;                // token => submission details
@@ -47,11 +47,9 @@ library SponsorshipLib {
         emit TokenSubmitted(token, tokenName, msg.sender);
     }
     
-    function approveToken(SponsorshipStorage storage self, address token, uint256 minAmount) external {          // Owner approves a submitted token with minimum amount
-        if (!self.tokenSubmissions[token].exists) revert InvalidParams();
-        
+    function whitelistToken(SponsorshipStorage storage self, address token, uint256 minAmount) external {          // Owner approves a submitted token with minimum amount
         self.tokenMinAmount[token] = minAmount;
-        if (self.approvedTokensAmount[token] == 0)  self.approvedTokenList.push(token);
+        if (self.tokenAmounts[token] == 0)  self.approvedTokenList.push(token);
         emit TokenApproved(token, minAmount);
     }
 
@@ -65,7 +63,7 @@ library SponsorshipLib {
         if (amount >= self.tokenMinAmount[token]) {
             self.sponsorProfiles[msg.sender] = SponsorProfile({ name: sponsorName, image: sponsorImageURL });
             self.sponsorTokenAmounts[msg.sender][token] += amount;
-            self.approvedTokensAmount[token] += amount;
+            self.tokenAmounts[token] += amount;
             
             if (!self.isSponsor[msg.sender]) {
                 self.isSponsor[msg.sender] = true;
@@ -99,7 +97,7 @@ library SponsorshipLib {
         }
     }
 
-    function getTokenTotal(SponsorshipStorage storage self, address token) external view returns (uint256) { return self.approvedTokensAmount[token]; }
+    function getTokenTotal(SponsorshipStorage storage self, address token) external view returns (uint256) { return self.tokenAmounts[token]; }
     function getSponsorTokenAmount(SponsorshipStorage storage self, address sponsor, address token) external view returns (uint256) { return self.sponsorTokenAmounts[sponsor][token]; }
     function getTokenMinAmount(SponsorshipStorage storage self, address token) external view returns (uint256) { return self.tokenMinAmount[token]; }
     
@@ -125,7 +123,7 @@ library SponsorshipLib {
         uint256 len = tokens.length;
         for (uint256 i; i < len; i++) {
             address token = tokens[i];
-            uint256 totalTokenAmount = self.approvedTokensAmount[token];
+            uint256 totalTokenAmount = self.tokenAmounts[token];
             if (totalTokenAmount == 0) continue;
             uint256 share = (totalTokenAmount * projectShare) / totalTokens;
             _handleTokenTransfer(token, share, false, recipient);

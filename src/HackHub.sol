@@ -77,9 +77,8 @@ contract Hackathon is Ownable {
         if (_startTime >= _endTime || _judges.length != _tokens.length) revert InvalidParams();
         name = _name;startTime = _startTime; endTime = _endTime; startDate = _startDate; endDate = _endDate; imageURL = _imageURL; factory = msg.sender;
         
-        // Ensure native token is submitted before approval to avoid revert in SponsorshipLib.approveToken
         sponsorshipStorage.submitToken(address(0), "Native");
-        sponsorshipStorage.approveToken(address(0), 1);
+        sponsorshipStorage.whitelistToken(address(0), 1);
         
         uint256 judgesLength = _judges.length;
         for (uint256 i; i < judgesLength;) {
@@ -148,7 +147,7 @@ contract Hackathon is Ownable {
     }
 
     function submitToken(address token, string calldata tokenName) external { sponsorshipStorage.submitToken(token, tokenName); }
-    function approveToken(address token, uint256 minAmount) external onlyOwner { sponsorshipStorage.approveToken(token, minAmount); }
+    function whitelistToken(address token, uint256 minAmount) external onlyOwner { sponsorshipStorage.whitelistToken(token, minAmount); }
 
     function depositToToken(address token, uint256 amount, string calldata sponsorName, string calldata sponsorImageURL) external payable {
         if (concluded) revert AlreadyConcluded();

@@ -52,9 +52,9 @@ contract Hackathon is Ownable {
     
     SponsorshipLib.SponsorshipStorage private sponsorshipStorage;         // Prize pool managed through SponsorshipLib
 
-    // event ProjectSubmitted(uint256 indexed id, address indexed submitter);
-    // event Voted(address indexed judge, uint256 indexed projectId, uint256 amount);
-    // event PrizeClaimed(uint256 indexed projectId, uint256 amount);
+    event ProjectSubmitted(uint256 indexed id, address indexed submitter);
+    event Voted(address indexed judge, uint256 indexed projectId, uint256 amount);
+    event PrizeClaimed(uint256 indexed projectId, uint256 amount);
 
     modifier duringSubmission() {
         if (block.timestamp < startTime || block.timestamp > endTime) revert SubmissionClosed();
@@ -77,8 +77,7 @@ contract Hackathon is Ownable {
         if (_startTime >= _endTime || _judges.length != _tokens.length) revert InvalidParams();
         name = _name;startTime = _startTime; endTime = _endTime; startDate = _startDate; endDate = _endDate; imageURL = _imageURL; factory = msg.sender;
         
-        sponsorshipStorage.submitToken(address(0), "Native");
-        sponsorshipStorage.whitelistToken(address(0), 1);
+
         
         uint256 judgesLength = _judges.length;
         for (uint256 i; i < judgesLength;) {
@@ -104,7 +103,7 @@ contract Hackathon is Ownable {
         participantProjectId[msg.sender] = id;
         participants.push(msg.sender);
         IHackHubFactory(factory).registerParticipant(msg.sender);
-        // emit ProjectSubmitted(id, msg.sender);
+        emit ProjectSubmitted(id, msg.sender);
     }
 
     function vote(uint256 projectId, uint256 amount) external duringEvaluation {
@@ -117,7 +116,7 @@ contract Hackathon is Ownable {
         remainingJudgeTokens[msg.sender] = available - amount;
         projectTokens[projectId] = projectTokens[projectId] - currentVote + amount;
         judgeVotes[msg.sender][projectId] = amount;
-        // emit Voted(msg.sender, projectId, amount);
+        emit Voted(msg.sender, projectId, amount);
     }
 
     function concludeHackathon() external duringEvaluation onlyOwner {
@@ -134,7 +133,7 @@ contract Hackathon is Ownable {
         uint256 projectShare = projectTokens[projectId];
 
         sponsorshipStorage.distributePrizes(recipient, projectShare, totalTokens);        
-        // emit PrizeClaimed(projectId, projectShare);
+        emit PrizeClaimed(projectId, projectShare);
     }
 
     function adjustJudgeTokens(address judge, uint256 amount) external onlyOwner duringSubmission {
@@ -145,9 +144,6 @@ contract Hackathon is Ownable {
         if (amount > oldAmount) totalTokens += (amount - oldAmount);
         else if (oldAmount > amount) totalTokens -= (oldAmount - amount);
     }
-
-    function submitToken(address token, string calldata tokenName) external { sponsorshipStorage.submitToken(token, tokenName); }
-    function whitelistToken(address token, uint256 minAmount) external onlyOwner { sponsorshipStorage.whitelistToken(token, minAmount); }
 
     function depositToToken(address token, uint256 amount, string calldata sponsorName, string calldata sponsorImageURL) external payable {
         if (concluded) revert AlreadyConcluded();
@@ -161,13 +157,12 @@ contract Hackathon is Ownable {
     function getParticipants() external view returns (address[] memory) { return participants; }
     
     function getTokenTotal(address token) external view returns (uint256) { return sponsorshipStorage.getTokenTotal(token); }
-    function getTokenMinAmount(address token) external view returns (uint256) { return sponsorshipStorage.getTokenMinAmount(token);  }
-    function getApprovedTokensList() external view returns (address[] memory) { return sponsorshipStorage.getApprovedTokensList(); }
+    function getDepositedTokensList() external view returns (address[] memory) { return sponsorshipStorage.getDepositedTokensList(); }
 
     function getSponsorProfile(address sponsor) external view returns (string memory sponsorName, string memory sponsorImageURL) {return sponsorshipStorage.getSponsorProfile(sponsor); }
     function getSponsorTokenAmount(address sponsor, address token) external view returns (uint256) { return sponsorshipStorage.getSponsorTokenAmount(sponsor, token); }
     function getAllSponsors() external view returns (address[] memory) { return sponsorshipStorage.getAllSponsors(); }
 
-    function getSubmittedTokensList() external view returns (address[] memory) { return sponsorshipStorage.getSubmittedTokensList(); }
-    function getTokenSubmission(address token) external view returns (string memory tokenName, address submitter, bool exists) { return sponsorshipStorage.getTokenSubmission(token);}
+    function blockSponsor(address sponsor) external onlyOwner { sponsorshipStorage.blockSponsor(sponsor); }
+    function isSponsorBlocked(address sponsor) external view returns (bool) { return sponsorshipStorage.isSponsorBlocked(sponsor);}
 }

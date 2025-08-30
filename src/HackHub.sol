@@ -76,9 +76,6 @@ contract Hackathon is Ownable {
         
         if (_startTime >= _endTime || _judges.length != _tokens.length) revert InvalidParams();
         name = _name;startTime = _startTime; endTime = _endTime; startDate = _startDate; endDate = _endDate; imageURL = _imageURL; factory = msg.sender;
-        
-
-        
         uint256 judgesLength = _judges.length;
         for (uint256 i; i < judgesLength;) {
             address j = _judges[i];
